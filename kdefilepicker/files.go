@@ -32,6 +32,7 @@ type fileEntry struct {
 	size      int64
 	modTime   time.Time
 	itemCount int
+	depth     int
 }
 
 type fileView struct {
@@ -50,6 +51,11 @@ type fileView struct {
 	foldersFirst bool
 	filterText   string
 	patterns     []string
+	expanded     map[string]bool
+	childCache   map[string][]fileEntry
+	singleClick  bool
+	scrollDrag   bool
+	scrollGrab   float32
 
 	viewMode   int // 0 details, 1 compact, 2 icons
 	iconSize   float32
@@ -90,6 +96,8 @@ func newFileView(dir string) *fileView {
 		ascending:    true,
 		foldersFirst: true,
 		iconSize:     16,
+		expanded:     map[string]bool{},
+		childCache:   map[string][]fileEntry{},
 	}
 	v.ExtendBaseWidget(v)
 	return v
@@ -123,6 +131,8 @@ func (v *fileView) SetDir(dir string, entries []fileEntry) {
 	v.selected = -1
 	v.hover = -1
 	v.offset = 0
+	v.expanded = map[string]bool{}
+	v.childCache = map[string][]fileEntry{}
 	v.applyFilter()
 }
 
@@ -148,8 +158,31 @@ func (v *fileView) SetSort(field sortField, ascending bool) {
 }
 
 func (v *fileView) applyFilter() {
-	filtered := make([]fileEntry, 0, len(v.entries))
-	for _, e := range v.entries {
+	base := v.filterSort(v.entries)
+	out := make([]fileEntry, 0, len(base))
+	var add func(list []fileEntry, depth int)
+	add = func(list []fileEntry, depth int) {
+		for _, e := range list {
+			e.depth = depth
+			out = append(out, e)
+			if v.viewMode == 0 && e.isDir && v.expanded[e.path] {
+				children := v.filterSort(v.children(e.path))
+				add(children, depth+1)
+			}
+		}
+	}
+	add(base, 0)
+	v.filtered = out
+	if v.selected >= len(v.filtered) {
+		v.selected = -1
+	}
+	v.clampOffset()
+	v.Refresh()
+}
+
+func (v *fileView) filterSort(entries []fileEntry) []fileEntry {
+	filtered := make([]fileEntry, 0, len(entries))
+	for _, e := range entries {
 		if !v.showHidden && strings.HasPrefix(e.name, ".") {
 			continue
 		}
@@ -182,12 +215,54 @@ func (v *fileView) applyFilter() {
 		}
 		return !less
 	})
-	v.filtered = filtered
-	if v.selected >= len(v.filtered) {
-		v.selected = -1
+	return filtered
+}
+
+func (v *fileView) children(path string) []fileEntry {
+	if cached, ok := v.childCache[path]; ok {
+		return cached
 	}
-	v.clampOffset()
+	entries, err := readEntries(path, true)
+	if err != nil {
+		entries = nil
+	}
+	v.childCache[path] = entries
+	return entries
+}
+
+func (v *fileView) toggleExpanded(e fileEntry) {
+	if !e.isDir || v.viewMode != 0 {
+		return
+	}
+	selPath := ""
+	if sel, ok := v.selectedEntry(); ok {
+		selPath = sel.path
+	}
+	if v.expanded[e.path] {
+		delete(v.expanded, e.path)
+	} else {
+		v.expanded[e.path] = true
+	}
+	v.applyFilter()
+	v.selectPath(selPath)
 	v.Refresh()
+}
+
+func (v *fileView) selectPath(path string) {
+	if path == "" {
+		return
+	}
+	for i, e := range v.filtered {
+		if e.path == path {
+			v.selected = i
+			return
+		}
+	}
+}
+
+func (v *fileView) SetViewMode(mode int) {
+	v.viewMode = mode
+	v.applyFilter()
 }
 
 func (v *fileView) entryAt(y float32) int {
@@ -254,13 +329,26 @@ func (v *fileView) Tapped(e *fyne.PointEvent) {
 	if c := fyne.CurrentApp().Driver().CanvasForObject(v); c != nil {
 		c.Focus(v)
 	}
+	if v.inScrollbar(e.Position.X, e.Position.Y) {
+		v.scrollToY(e.Position.Y)
+		return
+	}
 	idx := v.entryAtPoint(e.Position.X, e.Position.Y)
 	if idx < 0 {
 		return
 	}
+	entry := v.filtered[idx]
+	if v.viewMode == 0 && entry.isDir && e.Position.X >= float32(4+entry.depth*16) && e.Position.X <= float32(22+entry.depth*16) {
+		v.toggleExpanded(entry)
+		return
+	}
 	v.selected = idx
 	if v.onSelect != nil {
-		v.onSelect(v.filtered[idx])
+		v.onSelect(entry)
+	}
+	if v.singleClick && entry.isDir && v.onOpenDir != nil {
+		v.onOpenDir(entry.path)
+		return
 	}
 	v.Refresh()
 }
@@ -289,6 +377,10 @@ func (v *fileView) DoubleTapped(e *fyne.PointEvent) {
 func (v *fileView) MouseIn(*desktop.MouseEvent) {}
 
 func (v *fileView) MouseMoved(e *desktop.MouseEvent) {
+	if v.scrollDrag {
+		v.scrollToY(e.Position.Y)
+		return
+	}
 	idx := v.entryAt(e.Position.Y)
 	if idx != v.hover {
 		v.hover = idx
@@ -301,7 +393,90 @@ func (v *fileView) MouseOut() {
 	v.Refresh()
 }
 
-func (v *fileView) Cursor() desktop.Cursor { return desktop.PointerCursor }
+func (v *fileView) Cursor() desktop.Cursor {
+	if v.scrollDrag {
+		return desktop.VResizeCursor
+	}
+	return desktop.PointerCursor
+}
+
+func (v *fileView) inScrollbar(x, y float32) bool {
+	if v.maxOffset() <= 0 {
+		return false
+	}
+	top := float32(0)
+	if v.viewMode == 0 {
+		top = headerH
+	}
+	return x >= v.Size().Width-scrollbarW && y >= top
+}
+
+func (v *fileView) scrollbarTrack() (top, height, thumb float32) {
+	top = 0
+	if v.viewMode == 0 {
+		top = headerH
+	}
+	height = v.Size().Height - top - 8
+	if height < 1 {
+		height = 1
+	}
+	content := v.maxOffset() + height
+	thumb = height * height / content
+	if thumb < 24 {
+		thumb = 24
+	}
+	return
+}
+
+func (v *fileView) scrollToY(y float32) {
+	top, height, thumb := v.scrollbarTrack()
+	track := height - thumb
+	if track <= 0 {
+		return
+	}
+	frac := (y - top - v.scrollGrab) / track
+	v.offset = clamp(frac, 0, 1) * v.maxOffset()
+	v.clampOffset()
+	v.Refresh()
+}
+
+func (v *fileView) scrollThumbTop() float32 {
+	top, height, thumb := v.scrollbarTrack()
+	track := height - thumb
+	if track <= 0 {
+		return top
+	}
+	return top + (v.offset/v.maxOffset())*track
+}
+
+func (v *fileView) MouseDown(e *desktop.MouseEvent) {
+	if e.Button != desktop.MouseButtonPrimary || !v.inScrollbar(e.Position.X, e.Position.Y) {
+		return
+	}
+	_, _, thumb := v.scrollbarTrack()
+	thumbTop := v.scrollThumbTop()
+	v.scrollGrab = thumb / 2
+	if e.Position.Y >= thumbTop && e.Position.Y <= thumbTop+thumb {
+		v.scrollGrab = e.Position.Y - thumbTop
+	}
+	v.scrollDrag = true
+	v.scrollToY(e.Position.Y)
+}
+
+func (v *fileView) MouseUp(*desktop.MouseEvent) {
+	v.scrollDrag = false
+}
+
+func (v *fileView) Dragged(e *fyne.DragEvent) {
+	if v.scrollDrag {
+		v.scrollToY(e.Position.Y)
+	}
+}
+
+func (v *fileView) DragEnd() {
+	v.scrollDrag = false
+	v.Refresh()
+}
 
 func (v *fileView) TypedRune(rune) {}
 

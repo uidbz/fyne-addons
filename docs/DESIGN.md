@@ -102,6 +102,12 @@ Toolbar icons are 22 px; row/place/device icons are 16 px.
 * A double-click on a directory navigates into it. A double-click on a file
   accepts it. The Open button on a selected directory navigates, matching
   KFileWidget.
+* The details-view chevron expands directories into a recursive tree. With
+  `SetSingleClickDirectories(true)` a click on the folder row navigates
+  immediately while the chevron still expands.
+* The scroll bar supports clicking the track, dragging the thumb (including a
+  hover-move fallback), and wheel scrolling. The zoom slider supports clicking
+  and dragging anywhere along its groove.
 * Selecting a row fills the name field and updates the preview dock.
 * History is a simple index into a path list; back/forward start disabled.
 * The places model preserves XBEL order, skips hidden entries and unsupported

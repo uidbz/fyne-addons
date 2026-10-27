@@ -5,10 +5,12 @@ package kdefilepicker
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/test"
 )
 
@@ -250,4 +252,98 @@ func TestMenusQuickFilterAndPreview(t *testing.T) {
 	d.SelectFile("")
 	d.SetViewMode(ViewIcons)
 	d.SetViewMode(ViewDetails)
+}
+
+func TestTreeExpansionAndSingleClick(t *testing.T) {
+	test.NewApp()
+	dir := t.TempDir()
+	folder := filepath.Join(dir, "folder")
+	if err := os.MkdirAll(filepath.Join(folder, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(folder, "nested", "deep.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	d := NewOpenDialog(dir)
+	w := test.NewWindow(d)
+	defer w.Close()
+	w.Resize(fyne.NewSize(1400, 869))
+
+	idx := -1
+	for i, e := range d.files.filtered {
+		if e.name == "folder" {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		t.Fatal("folder not listed")
+	}
+	y := headerH + rowH*float32(idx) + 10
+	test.TapAt(d.files, fyne.NewPos(10, y))
+	found := false
+	for _, e := range d.files.filtered {
+		if e.name == "nested" && e.depth == 1 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("folder did not expand")
+	}
+	test.TapAt(d.files, fyne.NewPos(10, y))
+	for _, e := range d.files.filtered {
+		if e.name == "nested" {
+			t.Fatal("folder did not collapse")
+		}
+	}
+
+	// The folder is still the first row after collapsing.
+	d.SetSingleClickDirectories(true)
+	test.TapAt(d.files, fyne.NewPos(200, y))
+	if d.CurrentDir() != folder {
+		t.Fatalf("single-click did not enter folder: %q", d.CurrentDir())
+	}
+}
+
+func TestScrollbarAndSliderDrag(t *testing.T) {
+	test.NewApp()
+	dir := t.TempDir()
+	for i := 0; i < 80; i++ {
+		name := filepath.Join(dir, "file-"+strconv.Itoa(i)+".txt")
+		if err := os.WriteFile(name, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d := NewOpenDialog(dir)
+	w := test.NewWindow(d)
+	defer w.Close()
+	w.Resize(fyne.NewSize(1400, 869))
+
+	if d.files.maxOffset() <= 0 {
+		t.Fatal("test directory should be scrollable")
+	}
+	x := d.files.Size().Width - 10
+	d.files.MouseDown(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: fyne.NewPos(x, headerH+80)}})
+	if !d.files.scrollDrag {
+		t.Fatal("scrollbar drag did not start")
+	}
+	d.files.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: fyne.NewPos(x, headerH+300)}})
+	d.files.DragEnd()
+	if d.files.offset <= 0 {
+		t.Fatal("scrollbar drag did not scroll")
+	}
+
+	d.SetViewMode(ViewIcons)
+	slider := d.toolbar.slider
+	slider.Resize(fyne.NewSize(90, 30))
+	before := slider.value
+	slider.MouseDown(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: fyne.NewPos(15, 15)}})
+	slider.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: fyne.NewPos(75, 15)}})
+	slider.MouseUp(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: fyne.NewPos(75, 15)}})
+	if slider.value <= before {
+		t.Fatalf("slider did not move: %v -> %v", before, slider.value)
+	}
+	if d.files.iconSize <= 16 {
+		t.Fatalf("slider did not change icon size: %v", d.files.iconSize)
+	}
 }

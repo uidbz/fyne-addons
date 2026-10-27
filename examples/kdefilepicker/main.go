@@ -15,12 +15,13 @@ import (
 
 func main() {
 	var (
-		dir        = flag.String("dir", "", "directory to open (default: home)")
-		save       = flag.Bool("save", false, "open a save dialog")
-		folder     = flag.Bool("folder", false, "open a folder-selection dialog")
-		preview    = flag.Bool("preview", false, "show the preview panel")
-		view       = flag.String("view", "details", "details, compact or icons")
-		selectFile = flag.String("select", "", "select this file name on startup")
+		dir         = flag.String("dir", "", "directory to open (default: home)")
+		save        = flag.Bool("save", false, "open a save dialog")
+		folder      = flag.Bool("folder", false, "open a folder-selection dialog")
+		preview     = flag.Bool("preview", false, "show the preview panel")
+		view        = flag.String("view", "details", "details, compact or icons")
+		selectFile  = flag.String("select", "", "select this file name on startup")
+		singleClick = flag.Bool("singleclick", false, "enter folders with a single click")
 	)
 	flag.Parse()
 
@@ -66,6 +67,9 @@ func main() {
 	d.ShowInWindow(w)
 	if *preview {
 		d.ShowPreview(true)
+	}
+	if *singleClick {
+		d.SetSingleClickDirectories(true)
 	}
 	if *selectFile != "" {
 		d.SelectFile(*selectFile)

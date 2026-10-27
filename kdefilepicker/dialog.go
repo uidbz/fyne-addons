@@ -231,6 +231,10 @@ func (d *Dialog) SetSelectedFilter(index int) {
 // SelectedFilter returns the index of the active filter.
 func (d *Dialog) SelectedFilter() int { return d.filterIdx }
 
+// SetSingleClickDirectories makes a single click on a folder navigate into it
+// instead of only selecting it. Double-click navigation remains available.
+func (d *Dialog) SetSingleClickDirectories(enabled bool) { d.files.singleClick = enabled }
+
 // SetShowHidden controls whether dot files are listed.
 func (d *Dialog) SetShowHidden(show bool) {
 	d.showHidden = show
@@ -364,7 +368,7 @@ func (d *Dialog) wireToolbar() {
 }
 
 func (d *Dialog) setView(mode int) {
-	d.files.viewMode = mode
+	d.files.SetViewMode(mode)
 	if mode == 2 {
 		if d.files.iconSize < 48 {
 			d.files.iconSize = 64

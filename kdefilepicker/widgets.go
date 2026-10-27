@@ -265,10 +265,11 @@ func (r *pushButtonRenderer) Destroy()                     {}
 type zoomSlider struct {
 	widget.BaseWidget
 
-	value   float32
-	hovered bool
-	tap     func(float32)
-	changed func()
+	value    float32
+	hovered  bool
+	dragging bool
+	tap      func(float32)
+	changed  func()
 
 	track  *canvas.Rectangle
 	ticks  []*canvas.Rectangle
@@ -316,24 +317,53 @@ func (s *zoomSlider) setValue(v float32) {
 	s.Refresh()
 }
 
-func (s *zoomSlider) Tapped(e *fyne.PointEvent) {
-	s.setValue(e.Position.X / s.Size().Width)
+func (s *zoomSlider) valueAtX(x float32) float32 {
+	const margin = 9.0
+	trackW := s.Size().Width - 2*margin
+	if trackW <= 0 {
+		return s.value
+	}
+	return (x - margin) / trackW
 }
+
+func (s *zoomSlider) Tapped(e *fyne.PointEvent) {
+	s.setValue(s.valueAtX(e.Position.X))
+}
+
+func (s *zoomSlider) MouseDown(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonPrimary {
+		s.dragging = true
+		s.setValue(s.valueAtX(e.Position.X))
+	}
+}
+
+func (s *zoomSlider) MouseUp(*desktop.MouseEvent) { s.dragging = false }
 
 func (s *zoomSlider) Dragged(e *fyne.DragEvent) {
-	s.setValue((e.Position.X + e.Dragged.DX) / s.Size().Width)
+	s.setValue(s.valueAtX(e.Position.X))
 }
 
-func (s *zoomSlider) DragEnd() {}
+func (s *zoomSlider) DragEnd() { s.dragging = false }
 
 func (s *zoomSlider) MouseIn(*desktop.MouseEvent) {
 	s.hovered = true
 	s.Refresh()
 }
 
-func (s *zoomSlider) MouseMoved(*desktop.MouseEvent) {}
-func (s *zoomSlider) MouseOut()                      { s.hovered = false; s.Refresh() }
-func (s *zoomSlider) Cursor() desktop.Cursor         { return desktop.PointerCursor }
+func (s *zoomSlider) MouseMoved(e *desktop.MouseEvent) {
+	if s.dragging {
+		s.setValue(s.valueAtX(e.Position.X))
+	}
+}
+
+func (s *zoomSlider) MouseOut() { s.hovered = false; s.Refresh() }
+
+func (s *zoomSlider) Cursor() desktop.Cursor {
+	if s.dragging {
+		return desktop.HResizeCursor
+	}
+	return desktop.PointerCursor
+}
 
 type zoomSliderRenderer struct {
 	s    *zoomSlider

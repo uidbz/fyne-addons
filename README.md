@@ -32,9 +32,13 @@ modal-sized window, or compose it into a larger application.
   `Ctrl+L` editable path mode.
 * **History** — back, forward, up and reload with the same initial states as
   KDE (back/forward disabled at the start).
-* **Three file views** — details, compact and icon grid. The toolbar zoom
-  slider controls the icon grid; the sort menu controls field, direction and
-  folders-first ordering.
+* **Three file views** — details, compact and icon grid. Details view supports
+  an expandable folder tree; the toolbar zoom slider controls the icon grid and
+  the sort menu controls field, direction and folders-first ordering.
+* **Draggable chrome** — the vertical scroll bar and zoom slider support
+  click-to-jump and drag tracking.
+* **Single-click option** — optionally enter folders with a single click while
+  keeping expander arrows available for in-place tree expansion.
 * **File type filters** — arbitrary glob filters, with an optional quick
   "filter by name" row (`Ctrl+I`).
 * **Preview dock** — images, SVGs, and metadata for the selected file.
@@ -57,6 +61,11 @@ The filter, sort, options, bookmarks and path dropdowns use a custom
 Breeze-style menu renderer rather than Fyne's stock pop-up menu:
 
 ![Sort menu](docs/screenshots/kde6-file-dialog-menu.png)
+
+Details view expands folders in place; `SetSingleClickDirectories(true)` turns
+folder rows into single-click navigation:
+
+![Folder tree](docs/screenshots/kde6-file-dialog-tree.png)
 
 ---
 
@@ -117,6 +126,7 @@ go run ./examples/kdefilepicker -save
 go run ./examples/kdefilepicker -folder
 go run ./examples/kdefilepicker -view icons
 go run ./examples/kdefilepicker -preview -dir ~/Pictures
+go run ./examples/kdefilepicker -singleclick
 ```
 
 ### Embedding instead of showing a window
@@ -146,6 +156,7 @@ to the operating system, just like a native KDE dialog.
 | `NewDirectoryDialog(startDir)` | Select a folder. |
 | `SetFilters([]Filter)` / `SetSelectedFilter(i)` | Configure and select file type filters. |
 | `SetShowHidden(bool)` | Show or hide dot files. |
+| `SetSingleClickDirectories(bool)` | Enter folders with a single click. |
 | `SetFileName(name)` | Pre-fill the name field. |
 | `SetOnAccept(func(path string))` | Called with the chosen path. |
 | `SetOnCancel(func())` | Called when the dialog is cancelled. |
