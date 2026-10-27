@@ -53,6 +53,11 @@ modal-sized window, or compose it into a larger application.
 | --- | --- |
 | ![Preview](docs/screenshots/kde6-file-dialog-preview.png) | ![Icon view](docs/screenshots/kde6-file-dialog-icons.png) |
 
+The filter, sort, options, bookmarks and path dropdowns use a custom
+Breeze-style menu renderer rather than Fyne's stock pop-up menu:
+
+![Sort menu](docs/screenshots/kde6-file-dialog-menu.png)
+
 ---
 
 ## Requirements
