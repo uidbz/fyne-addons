@@ -1,16 +1,10 @@
-share/fonts/euphoriascript-regular.ttf
-Copyright (c) 2012, Sabrina Mariela Lopez (typesenses@live.com.ar),
-with Reserved Font Name "Euphoria Script".
+Copyright 2022 The Noto Project Authors (https://github.com/notofonts/latin-greek-cyrillic)
 
-share/fonts/LinuxLibertineDisplayRegular.ttf
-Copyright (c) 2003-2012, Philipp H. Poll,
-with Reserved Font Name "Linux Libertine Display".
-
-Fonts licensed under the SIL Open Font License, Version 1.1.
+This Font Software is licensed under the SIL Open Font License, Version 1.1.
 This license is copied below, and is also available with a FAQ at:
-http://scripts.sil.org/OFL
+https://openfontlicense.org
 
------------------------------------------------------------
+
 SIL OPEN FONT LICENSE Version 1.1 - 26 February 2007
 -----------------------------------------------------------
 
