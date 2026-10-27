@@ -71,8 +71,9 @@ type Dialog struct {
 	onAccept func(string)
 	onCancel func()
 
-	window       fyne.Window
-	pendingFocus fyne.Focusable
+	window            fyne.Window
+	pendingFocus      fyne.Focusable
+	pendingFocusTries int
 
 	bg       *canvas.Rectangle
 	divider  *canvas.Rectangle
@@ -282,6 +283,7 @@ func (d *Dialog) FocusName() { d.requestFocus(d.bottom.name) }
 
 func (d *Dialog) requestFocus(obj fyne.Focusable) {
 	d.pendingFocus = obj
+	d.pendingFocusTries = 0
 	canvas.Refresh(d)
 }
 

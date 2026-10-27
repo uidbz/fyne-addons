@@ -200,6 +200,7 @@ type placesView struct {
 	onOpen  func(string)
 
 	hover   int
+	focused bool
 	offset  float32
 	rows    []*placeRow
 	headers []*canvas.Text
@@ -265,6 +266,9 @@ func (v *placesView) SetCurrent(path string) {
 }
 
 func (v *placesView) Tapped(e *fyne.PointEvent) {
+	if c := fyne.CurrentApp().Driver().CanvasForObject(v); c != nil {
+		c.Focus(v)
+	}
 	idx := v.indexAt(e.Position.Y)
 	if idx >= 0 {
 		if v.onOpen != nil {
@@ -299,6 +303,12 @@ func (v *placesView) indexAt(y float32) int {
 	}
 	return -1
 }
+
+func (v *placesView) TypedRune(rune)          {}
+func (v *placesView) TypedKey(*fyne.KeyEvent) {}
+
+func (v *placesView) FocusGained() { v.focused = true; v.Refresh() }
+func (v *placesView) FocusLost()   { v.focused = false; v.Refresh() }
 
 func (v *placesView) MouseMoved(e *desktop.MouseEvent) {
 	idx := v.indexAt(e.Position.Y)
@@ -384,7 +394,11 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 			selected := filepath.Clean(p.path) == r.v.current
 			hovered := idx == r.v.hover
 			if selected {
-				row.sel.FillColor = colPlaceSelection
+				if r.v.focused {
+					row.sel.FillColor = colAccent
+				} else {
+					row.sel.FillColor = colPlaceSelection
+				}
 				row.sel.Show()
 			} else if hovered {
 				row.sel.FillColor = colHover
