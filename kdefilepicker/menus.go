@@ -102,6 +102,10 @@ func (d *Dialog) showOptionsMenu() {
 		checkedEntry("Show Preview", d.previewVisible, func() {
 			d.setPreview(!d.previewVisible)
 		}),
+		menuSeparator(),
+		checkedEntry("Single Click to Open Folders", d.files.singleClick, func() {
+			d.SetSingleClickDirectories(!d.files.singleClick)
+		}),
 	}
 	d.showBreezeMenu(entries, d.toolbar.options, false)
 }

@@ -235,6 +235,9 @@ func (d *Dialog) SelectedFilter() int { return d.filterIdx }
 // instead of only selecting it. Double-click navigation remains available.
 func (d *Dialog) SetSingleClickDirectories(enabled bool) { d.files.singleClick = enabled }
 
+// SingleClickDirectories reports the single-click folder setting.
+func (d *Dialog) SingleClickDirectories() bool { return d.files.singleClick }
+
 // SetShowHidden controls whether dot files are listed.
 func (d *Dialog) SetShowHidden(show bool) {
 	d.showHidden = show

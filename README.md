@@ -156,7 +156,7 @@ to the operating system, just like a native KDE dialog.
 | `NewDirectoryDialog(startDir)` | Select a folder. |
 | `SetFilters([]Filter)` / `SetSelectedFilter(i)` | Configure and select file type filters. |
 | `SetShowHidden(bool)` | Show or hide dot files. |
-| `SetSingleClickDirectories(bool)` | Enter folders with a single click. |
+| `SetSingleClickDirectories(bool)` / `SingleClickDirectories()` | Enter folders with a single click. |
 | `SetFileName(name)` | Pre-fill the name field. |
 | `SetOnAccept(func(path string))` | Called with the chosen path. |
 | `SetOnCancel(func())` | Called when the dialog is cancelled. |
