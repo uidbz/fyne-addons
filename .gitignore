@@ -1,0 +1,11 @@
+# binaries
+/kdefilepicker-demo
+/examples/kdefilepicker/kdefilepicker
+*.test
+*.out
+*.prof
+
+# editor / OS
+.idea/
+.vscode/
+.DS_Store

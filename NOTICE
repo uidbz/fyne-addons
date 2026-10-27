@@ -1,0 +1,40 @@
+# Third-party notices
+
+This repository contains assets derived from third-party projects. The Go
+source code in this repository is MIT licensed; the assets below remain under
+their original licences.
+
+## Breeze icon theme
+
+The SVG files under `kdefilepicker/assets/icons/` are taken from the KDE
+Breeze icon theme (`breeze-icons`), version 6.31.0.
+
+* Project: https://invent.kde.org/frameworks/breeze-icons
+* Copyright: KDE contributors
+* Licence: GNU Lesser General Public License v3.0 or later
+  (LGPL-3.0-or-later)
+* Licence text: `kdefilepicker/assets/icons/COPYING.LGPL`
+
+The icons are embedded into the Go binary. They are dynamically recoloured at
+runtime, which is permitted by the LGPL. The complete corresponding source for
+the icons is available from the KDE project and from this repository (the SVG
+files are included verbatim except for the runtime colour substitution, which
+is performed in memory).
+## Noto Sans
+
+The TTF files under `kdefilepicker/assets/fonts/` are Noto Sans Regular, Bold,
+Italic and Bold Italic.
+
+* Project: https://github.com/notofonts/latin-greek-cyrillic
+* Copyright: The Noto Project Authors
+* Licence: SIL Open Font License, version 1.1
+* Licence text: `kdefilepicker/assets/fonts/OFL.txt`
+
+The fonts are embedded unmodified.
+
+## KDE / KIO reference implementation
+
+The layout, colour values and behaviour were studied from KIO 6.31.0 sources
+(`src/filewidgets/`), which are licensed LGPL-2.0-or-later. No KIO source code
+is copied into this repository; the Go implementation is an independent
+reimplementation.
