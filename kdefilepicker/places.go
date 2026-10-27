@@ -195,9 +195,10 @@ func hiddenXBEL(item xbelItem) bool {
 type placesView struct {
 	widget.BaseWidget
 
-	model   *placesModel
-	current string
-	onOpen  func(string)
+	model       *placesModel
+	current     string
+	selectedIdx int
+	onOpen      func(string)
 
 	hover   int
 	focused bool
@@ -219,7 +220,7 @@ type placeRow struct {
 }
 
 func newPlacesView(model *placesModel) *placesView {
-	v := &placesView{model: model, hover: -1}
+	v := &placesView{model: model, hover: -1, selectedIdx: -1}
 	v.ExtendBaseWidget(v)
 	return v
 }
@@ -262,6 +263,25 @@ func (v *placesView) MinSize() fyne.Size { return fyne.NewSize(sidebarWidth, 400
 
 func (v *placesView) SetCurrent(path string) {
 	v.current = filepath.Clean(path)
+	v.selectedIdx = -1
+	best := -1
+	flat := v.flat()
+	for i, p := range flat {
+		if p.path == "" || p.device {
+			if filepath.Clean(p.path) == v.current {
+				v.selectedIdx = i
+				break
+			}
+			continue
+		}
+		pp := filepath.Clean(p.path)
+		if v.current == pp || strings.HasPrefix(v.current, pp+string(filepath.Separator)) {
+			if len(pp) > best {
+				best = len(pp)
+				v.selectedIdx = i
+			}
+		}
+	}
 	v.Refresh()
 }
 
@@ -391,7 +411,7 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 			row.text.Move(fyne.NewPos(24, pos-2))
 			row.text.Resize(fyne.NewSize(165, 24))
 			row.sel.Resize(fyne.NewSize(191, 22))
-			selected := filepath.Clean(p.path) == r.v.current
+			selected := idx == r.v.selectedIdx
 			hovered := idx == r.v.hover
 			if selected {
 				if r.v.focused {
