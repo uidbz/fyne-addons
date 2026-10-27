@@ -330,6 +330,8 @@ func (v *placesView) TypedKey(*fyne.KeyEvent) {}
 func (v *placesView) FocusGained() { v.focused = true; v.Refresh() }
 func (v *placesView) FocusLost()   { v.focused = false; v.Refresh() }
 
+func (v *placesView) MouseIn(*desktop.MouseEvent) {}
+
 func (v *placesView) MouseMoved(e *desktop.MouseEvent) {
 	idx := v.indexAt(e.Position.Y)
 	if idx != v.hover {

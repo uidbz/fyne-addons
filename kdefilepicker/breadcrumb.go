@@ -116,6 +116,8 @@ func (b *breadcrumb) Tapped(e *fyne.PointEvent) {
 	}
 }
 
+func (b *breadcrumb) MouseIn(*desktop.MouseEvent) {}
+
 func (b *breadcrumb) MouseMoved(e *desktop.MouseEvent) {
 	idx := -1
 	for i, c := range b.crumbs {

@@ -286,6 +286,8 @@ func (v *fileView) DoubleTapped(e *fyne.PointEvent) {
 	}
 }
 
+func (v *fileView) MouseIn(*desktop.MouseEvent) {}
+
 func (v *fileView) MouseMoved(e *desktop.MouseEvent) {
 	idx := v.entryAt(e.Position.Y)
 	if idx != v.hover {

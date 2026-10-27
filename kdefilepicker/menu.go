@@ -124,6 +124,8 @@ func (m *breezeMenu) Tapped(e *fyne.PointEvent) {
 	}
 }
 
+func (m *breezeMenu) MouseIn(*desktop.MouseEvent) {}
+
 func (m *breezeMenu) MouseMoved(e *desktop.MouseEvent) {
 	idx := m.rowAt(e.Position.Y)
 	if idx >= 0 && (m.entries[idx].disabled || m.entries[idx].separator || m.entries[idx].group) {
