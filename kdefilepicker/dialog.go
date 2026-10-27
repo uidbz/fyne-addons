@@ -423,6 +423,11 @@ func (d *Dialog) openDir(dir string) {
 	if dir == "" {
 		return
 	}
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			dir = filepath.Join(home, strings.TrimPrefix(dir, "~/"))
+		}
+	}
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(d.currentDir, dir)
 	}
