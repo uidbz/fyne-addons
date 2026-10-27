@@ -258,6 +258,7 @@ func (v *fileView) selectPath(path string) {
 			return
 		}
 	}
+	v.selected = -1
 }
 
 func (v *fileView) SetViewMode(mode int) {
