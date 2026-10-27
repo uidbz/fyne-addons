@@ -107,7 +107,9 @@ Toolbar icons are 22 px; row/place/device icons are 16 px.
   immediately while the chevron still expands.
 * The scroll bar supports clicking the track, dragging the thumb (including a
   hover-move fallback), and wheel scrolling. The zoom slider supports clicking
-  and dragging anywhere along its groove.
+  and dragging anywhere along its groove, and scales the icon grid as well as
+  the row icon/height in details and compact views. None of the custom widgets
+  install a special mouse cursor.
 * Selecting a row fills the name field and updates the preview dock.
 * History is a simple index into a path list; back/forward start disabled.
 * The places model preserves XBEL order, skips hidden entries and unsupported

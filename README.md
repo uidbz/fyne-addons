@@ -36,7 +36,9 @@ modal-sized window, or compose it into a larger application.
   an expandable folder tree; the toolbar zoom slider controls the icon grid and
   the sort menu controls field, direction and folders-first ordering.
 * **Draggable chrome** — the vertical scroll bar and zoom slider support
-  click-to-jump and drag tracking.
+  click-to-jump and drag tracking. The zoom slider scales both the icon grid
+  and the row icons in details/compact views.
+* **Native cursor** — custom widgets do not override the system pointer shape.
 * **Single-click option** — optionally enter folders with a single click while
   keeping expander arrows available for in-place tree expansion.
 * **File type filters** — arbitrary glob filters, with an optional quick
