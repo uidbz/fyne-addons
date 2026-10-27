@@ -167,7 +167,7 @@ func (d *Dialog) setPreview(show bool) {
 	d.previewVisible = show
 	d.toolbar.preview.SetChecked(show)
 	d.updatePreview()
-	canvas.Refresh(d)
+	d.Refresh()
 }
 
 func (d *Dialog) updatePreview() {

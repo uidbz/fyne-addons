@@ -223,6 +223,9 @@ func TestMenusQuickFilterAndPreview(t *testing.T) {
 	d.showPathMenu()
 
 	d.setQuickFilter(true)
+	if !d.quickVisible {
+		t.Fatal("quick filter row not shown")
+	}
 	d.quick.SetText("alpha")
 	if len(d.files.filtered) != 1 || d.files.filtered[0].name != "alpha.txt" {
 		t.Fatalf("quick filter = %#v", d.files.filtered)

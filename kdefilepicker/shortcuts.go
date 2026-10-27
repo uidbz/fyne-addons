@@ -25,7 +25,7 @@ func (d *Dialog) InstallShortcuts(w fyne.Window) {
 	add(fyne.KeyF5, 0, func() { d.RefreshDir() })
 	add(fyne.KeyF9, 0, func() {
 		d.showPlaces = !d.showPlaces
-		canvasRefresh(d)
+		d.Refresh()
 	})
 	add(fyne.KeyEscape, 0, func() {
 		switch {

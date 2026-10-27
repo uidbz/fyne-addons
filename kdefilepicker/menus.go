@@ -8,7 +8,6 @@ import (
 	"strconv"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 )
 
 func (d *Dialog) menuCanvas() fyne.Canvas {
@@ -95,7 +94,7 @@ func (d *Dialog) showOptionsMenu() {
 		}),
 		checkedEntry("Show Places Panel", d.showPlaces, func() {
 			d.showPlaces = !d.showPlaces
-			canvasRefresh(d)
+			d.Refresh()
 		}),
 		checkedEntry("Show Quick Filter", d.quickVisible, func() {
 			d.setQuickFilter(!d.quickVisible)
@@ -106,8 +105,6 @@ func (d *Dialog) showOptionsMenu() {
 	}
 	d.showBreezeMenu(entries, d.toolbar.options, false)
 }
-
-func canvasRefresh(obj fyne.CanvasObject) { canvas.Refresh(obj) }
 
 func (d *Dialog) newFolder() {
 	base := "New Folder"

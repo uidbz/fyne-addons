@@ -285,7 +285,7 @@ func (d *Dialog) FocusName() { d.requestFocus(d.bottom.name) }
 func (d *Dialog) requestFocus(obj fyne.Focusable) {
 	d.pendingFocus = obj
 	d.pendingFocusTries = 0
-	canvas.Refresh(d)
+	d.Refresh()
 	d.focusDelayed(obj)
 }
 
@@ -571,7 +571,7 @@ func (d *Dialog) setQuickFilter(show bool) {
 		d.requestFocus(d.bottom.name)
 	}
 	d.files.SetFilter("")
-	canvas.Refresh(d)
+	d.Refresh()
 }
 
 func (d *Dialog) beginPathEdit() {
