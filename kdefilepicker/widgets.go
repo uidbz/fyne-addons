@@ -93,13 +93,6 @@ func (b *iconButton) MouseUp(*desktop.MouseEvent) {
 	b.Refresh()
 }
 
-func (b *iconButton) Cursor() desktop.Cursor {
-	if !b.enabled {
-		return desktop.DefaultCursor
-	}
-	return desktop.PointerCursor
-}
-
 type iconButtonRenderer struct {
 	b    *iconButton
 	objs []fyne.CanvasObject
@@ -194,12 +187,6 @@ func (b *pushButton) MouseDown(*desktop.MouseEvent) {
 	}
 }
 func (b *pushButton) MouseUp(*desktop.MouseEvent) { b.pressed = false; b.Refresh() }
-func (b *pushButton) Cursor() desktop.Cursor {
-	if !b.enabled {
-		return desktop.DefaultCursor
-	}
-	return desktop.PointerCursor
-}
 
 type pushButtonRenderer struct {
 	b    *pushButton
@@ -358,13 +345,6 @@ func (s *zoomSlider) MouseMoved(e *desktop.MouseEvent) {
 
 func (s *zoomSlider) MouseOut() { s.hovered = false; s.Refresh() }
 
-func (s *zoomSlider) Cursor() desktop.Cursor {
-	if s.dragging {
-		return desktop.HResizeCursor
-	}
-	return desktop.PointerCursor
-}
-
 type zoomSliderRenderer struct {
 	s    *zoomSlider
 	objs []fyne.CanvasObject
@@ -396,6 +376,7 @@ func (r *zoomSliderRenderer) Layout(size fyne.Size) {
 func (r *zoomSliderRenderer) MinSize() fyne.Size { return fyne.NewSize(90, 30) }
 
 func (r *zoomSliderRenderer) Refresh() {
+	r.Layout(r.s.Size())
 	if r.s.hovered {
 		r.s.outer.FillColor = colScrollHover
 	} else {
@@ -502,8 +483,6 @@ func (e *lineEdit) MouseIn(*desktop.MouseEvent) {
 
 func (e *lineEdit) MouseMoved(*desktop.MouseEvent) {}
 func (e *lineEdit) MouseOut()                      { e.hovered = false; e.Refresh() }
-func (e *lineEdit) Cursor() desktop.Cursor         { return desktop.TextCursor }
-
 func (e *lineEdit) setCursorFromX(x float32) {
 	const pad = 7.0
 	text := string(e.text)
@@ -730,8 +709,7 @@ func (c *comboBox) Tapped(e *fyne.PointEvent) {
 func (c *comboBox) MouseIn(*desktop.MouseEvent) { c.hovered = true; c.Refresh() }
 func (c *comboBox) MouseMoved(*desktop.MouseEvent) {
 }
-func (c *comboBox) MouseOut()              { c.hovered = false; c.Refresh() }
-func (c *comboBox) Cursor() desktop.Cursor { return desktop.PointerCursor }
+func (c *comboBox) MouseOut() { c.hovered = false; c.Refresh() }
 
 type comboBoxRenderer struct {
 	c    *comboBox

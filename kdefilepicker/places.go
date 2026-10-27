@@ -345,8 +345,6 @@ func (v *placesView) MouseOut() {
 	v.Refresh()
 }
 
-func (v *placesView) Cursor() desktop.Cursor { return desktop.PointerCursor }
-
 func (v *placesView) Scrolled(ev *fyne.ScrollEvent) {
 	v.offset -= ev.Scrolled.DY
 	v.clampOffset()

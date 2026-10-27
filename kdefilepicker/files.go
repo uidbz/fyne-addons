@@ -57,12 +57,13 @@ type fileView struct {
 	scrollDrag   bool
 	scrollGrab   float32
 
-	viewMode   int // 0 details, 1 compact, 2 icons
-	iconSize   float32
-	onSelect   func(fileEntry)
-	onOpenDir  func(string)
-	onActivate func(fileEntry)
-	onEscape   func()
+	viewMode       int // 0 details, 1 compact, 2 icons
+	iconSize       float32
+	detailIconSize float32
+	onSelect       func(fileEntry)
+	onOpenDir      func(string)
+	onActivate     func(fileEntry)
+	onEscape       func()
 
 	bg       *canvas.Rectangle
 	rows     []*fileRow
@@ -90,14 +91,15 @@ type fileRow struct {
 
 func newFileView(dir string) *fileView {
 	v := &fileView{
-		dir:          dir,
-		selected:     -1,
-		hover:        -1,
-		ascending:    true,
-		foldersFirst: true,
-		iconSize:     16,
-		expanded:     map[string]bool{},
-		childCache:   map[string][]fileEntry{},
+		dir:            dir,
+		selected:       -1,
+		hover:          -1,
+		ascending:      true,
+		foldersFirst:   true,
+		iconSize:       16,
+		detailIconSize: 16,
+		expanded:       map[string]bool{},
+		childCache:     map[string][]fileEntry{},
 	}
 	v.ExtendBaseWidget(v)
 	return v
@@ -303,8 +305,21 @@ func (v *fileView) entryAtPoint(x, y float32) int {
 }
 
 func (v *fileView) rowHeight() float32 {
+	if v.viewMode == 0 {
+		s := clamp(v.detailIconSize, 16, 64)
+		rh := s + 15
+		if rh < rowH {
+			rh = rowH
+		}
+		return rh
+	}
 	if v.viewMode == 1 {
-		return 26
+		s := clamp(v.detailIconSize, 16, 48)
+		rh := s + 10
+		if rh < 26 {
+			rh = 26
+		}
+		return rh
 	}
 	return rowH
 }
@@ -392,13 +407,6 @@ func (v *fileView) MouseMoved(e *desktop.MouseEvent) {
 func (v *fileView) MouseOut() {
 	v.hover = -1
 	v.Refresh()
-}
-
-func (v *fileView) Cursor() desktop.Cursor {
-	if v.scrollDrag {
-		return desktop.VResizeCursor
-	}
-	return desktop.PointerCursor
 }
 
 func (v *fileView) inScrollbar(x, y float32) bool {
@@ -818,7 +826,8 @@ func (r *fileViewRenderer) hideHeader() {
 
 func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, y float32, size fyne.Size, visibleH, header float32) {
 	v := r.v
-	if y+26 < header || y > header+visibleH {
+	rh := v.rowHeight()
+	if y+rh < header || y > header+visibleH {
 		r.hideRow(row)
 		return
 	}
@@ -831,13 +840,13 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 	}
 	row.bg.FillColor = rowBgColor
 	row.bg.Show()
-	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, 26))
+	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, rh))
 	row.bg.Move(fyne.NewPos(0, y))
 	row.sel.Hide()
 	if idx == v.selected {
 		row.sel.Show()
 		row.sel.Move(fyne.NewPos(1, y+2))
-		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, 22))
+		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, rh-4))
 		if v.focused {
 			row.sel.FillColor = colAccent
 			row.sel.StrokeWidth = 0
@@ -849,23 +858,24 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 		row.sel.Refresh()
 	}
 	row.exp.Hide()
+	iconSize := clamp(v.detailIconSize, 16, 48)
 	row.icon.Show()
 	row.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colText)
 	row.icon.Refresh()
-	row.icon.Resize(fyne.NewSize(16, 16))
-	row.icon.Move(fyne.NewPos(8, y+5))
+	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
+	row.icon.Move(fyne.NewPos(8, y+(rh-iconSize)/2))
 	row.name.Show()
 	row.name.Text = elide(e.name, size.Width-scrollbarW-160, textSize)
 	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignLeading
-	row.name.Move(fyne.NewPos(30, y-2))
+	row.name.Move(fyne.NewPos(30, y+(rh-26)/2-2))
 	row.name.Resize(fyne.NewSize(size.Width-scrollbarW-150, 24))
 	row.name.Refresh()
 	row.size.Show()
 	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
 	row.size.Alignment = fyne.TextAlignTrailing
 	row.size.Color = colText
-	row.size.Move(fyne.NewPos(size.Width-scrollbarW-140, y-2))
+	row.size.Move(fyne.NewPos(size.Width-scrollbarW-140, y+(rh-26)/2-2))
 	row.size.Resize(fyne.NewSize(130, 24))
 	row.size.Refresh()
 	row.date.Hide()
@@ -923,7 +933,8 @@ func (r *fileViewRenderer) layoutIconRow(row *fileRow, idx int, e fileEntry, x, 
 
 func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float32, size fyne.Size, visibleH float32) {
 	v := r.v
-	if y+rowH < headerH || y > headerH+visibleH {
+	rh := v.rowHeight()
+	if y+rh < headerH || y > headerH+visibleH {
 		r.hideRow(row)
 		return
 	}
@@ -936,14 +947,14 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	}
 	row.bg.FillColor = rowBgColor
 	row.bg.Show()
-	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, rowH))
+	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, rh))
 	row.bg.Move(fyne.NewPos(0, y))
 
 	row.sel.Hide()
 	if idx == v.selected {
 		row.sel.Show()
 		row.sel.Move(fyne.NewPos(1, y+2))
-		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, rowH-4))
+		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, rh-4))
 		if v.focused {
 			row.sel.FillColor = colAccent
 			row.sel.StrokeColor = colAccent
@@ -956,36 +967,51 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 		row.sel.Refresh()
 	}
 
+	indent := float32(e.depth * 16)
 	row.exp.Hide()
-	row.exp.Move(fyne.NewPos(4, y+8))
+	row.exp.Move(fyne.NewPos(4+indent, y+(rh-14)/2))
 	row.exp.Resize(fyne.NewSize(14, 14))
 	if e.isDir {
+		if v.expanded[e.path] {
+			row.exp.Resource = iconResource("go-down", colTextMuted)
+		} else {
+			row.exp.Resource = iconResource("go-next", colTextMuted)
+		}
+		row.exp.Refresh()
 		row.exp.Show()
 	}
+
+	iconSize := clamp(v.detailIconSize, 16, 64)
 	row.icon.Show()
 	row.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colText)
 	row.icon.Refresh()
-	row.icon.Resize(fyne.NewSize(16, 16))
-	row.icon.Move(fyne.NewPos(23, y+(rowH-16)/2-1))
+	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
+	row.icon.Move(fyne.NewPos(23+indent, y+(rh-iconSize)/2-1))
+
 	row.name.Show()
 	row.size.Show()
 	row.date.Show()
 	row.name.Alignment = fyne.TextAlignLeading
-	row.name.Text = elide(e.name, nameColumnW(size.Width)-60, textSize)
+	nameW := nameColumnW(size.Width) - 60 - indent
+	if nameW < 10 {
+		nameW = 10
+	}
+	row.name.Text = elide(e.name, nameW, textSize)
 	row.name.Color = colText
-	row.name.Move(fyne.NewPos(44, y+1))
-	row.name.Resize(fyne.NewSize(nameColumnW(size.Width)-60, 24))
+	textY := y + (rh-rowH)/2 + 1
+	row.name.Move(fyne.NewPos(44+indent, textY))
+	row.name.Resize(fyne.NewSize(nameW, 24))
 	row.name.Refresh()
 
 	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
-	row.size.Move(fyne.NewPos(nameColumnW(size.Width), y+1))
+	row.size.Move(fyne.NewPos(nameColumnW(size.Width), textY))
 	row.size.Resize(fyne.NewSize(sizeColumnW-4, 24))
 	row.size.Alignment = fyne.TextAlignTrailing
 	row.size.Color = colText
 	row.size.Refresh()
 
 	row.date.Text = formatDate(e.modTime)
-	row.date.Move(fyne.NewPos(nameColumnW(size.Width)+sizeColumnW+5, y+1))
+	row.date.Move(fyne.NewPos(nameColumnW(size.Width)+sizeColumnW+5, textY))
 	row.date.Resize(fyne.NewSize(size.Width-nameColumnW(size.Width)-sizeColumnW-scrollbarW-18, 24))
 	row.date.Color = colText
 	row.date.Refresh()

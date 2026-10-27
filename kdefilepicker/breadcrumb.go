@@ -137,8 +137,6 @@ func (b *breadcrumb) MouseOut() {
 	b.Refresh()
 }
 
-func (b *breadcrumb) Cursor() desktop.Cursor { return desktop.PointerCursor }
-
 type breadcrumbRenderer struct {
 	b    *breadcrumb
 	objs []fyne.CanvasObject

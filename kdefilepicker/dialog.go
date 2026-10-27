@@ -376,17 +376,23 @@ func (d *Dialog) setView(mode int) {
 		if d.files.iconSize < 48 {
 			d.files.iconSize = 64
 		}
-		sizes := []float32{16, 24, 32, 48, 64, 96, 128, 256}
-		for i, s := range sizes {
-			if s == d.files.iconSize {
-				d.toolbar.slider.value = float32(i) / float32(len(sizes)-1)
-				d.toolbar.slider.Refresh()
-				break
-			}
-		}
+		d.setSliderFor(d.files.iconSize)
+	} else {
+		d.setSliderFor(d.files.detailIconSize)
 	}
 	d.toolbar.SetView(mode)
 	d.files.Refresh()
+}
+
+func (d *Dialog) setSliderFor(size float32) {
+	sizes := []float32{16, 24, 32, 48, 64, 96, 128, 256}
+	for i, s := range sizes {
+		if s == size {
+			d.toolbar.slider.value = float32(i) / float32(len(sizes)-1)
+			d.toolbar.slider.Refresh()
+			return
+		}
+	}
 }
 
 func (d *Dialog) changeZoom(delta int) {
@@ -397,7 +403,11 @@ func (d *Dialog) changeZoom(delta int) {
 func (d *Dialog) applyZoom(v float32) {
 	sizes := []float32{16, 24, 32, 48, 64, 96, 128, 256}
 	i := int(clamp(v, 0, 1) * float32(len(sizes)-1))
-	d.files.iconSize = sizes[i]
+	if d.files.viewMode == 2 {
+		d.files.iconSize = sizes[i]
+	} else {
+		d.files.detailIconSize = sizes[i]
+	}
 	d.files.Refresh()
 }
 

@@ -142,8 +142,6 @@ func (m *breezeMenu) MouseOut() {
 	m.Refresh()
 }
 
-func (m *breezeMenu) Cursor() desktop.Cursor { return desktop.PointerCursor }
-
 type breezeMenuRenderer struct {
 	m    *breezeMenu
 	objs []fyne.CanvasObject

@@ -346,4 +346,17 @@ func TestScrollbarAndSliderDrag(t *testing.T) {
 	if d.files.iconSize <= 16 {
 		t.Fatalf("slider did not change icon size: %v", d.files.iconSize)
 	}
+
+	d.SetViewMode(ViewDetails)
+	if d.files.rowHeight() != rowH {
+		t.Fatalf("details row height should start at %v, got %v", rowH, d.files.rowHeight())
+	}
+	slider.MouseDown(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: fyne.NewPos(55, 15)}})
+	slider.MouseUp(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: fyne.NewPos(55, 15)}})
+	if d.files.detailIconSize <= 16 {
+		t.Fatalf("details zoom did not change icon size: %v", d.files.detailIconSize)
+	}
+	if d.files.rowHeight() <= rowH {
+		t.Fatalf("details rows did not grow: %v", d.files.rowHeight())
+	}
 }
