@@ -212,6 +212,9 @@ the live dialog:
 * KIO's disabled `Open` button state, `KUrlNavigator` breadcrumb, `Ctrl+L`
   path editing, and the Breeze Dark inactive selection treatment.
 
+A detailed source-to-implementation map, palette table and layout measurements
+are in [docs/DESIGN.md](docs/DESIGN.md).
+
 ### Intentional limitations
 
 * **Local filesystem only.** KIO's `smb://`, `sftp://`, `mtp://`, `timeline:`
