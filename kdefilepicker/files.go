@@ -865,11 +865,16 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(8, y+(rh-iconSize)/2))
 	row.name.Show()
-	row.name.Text = elide(e.name, size.Width-scrollbarW-160, textSize)
+	nameX := 8 + iconSize + 6
+	nameW := size.Width - scrollbarW - 140 - nameX - 8
+	if nameW < 10 {
+		nameW = 10
+	}
+	row.name.Text = elide(e.name, nameW, textSize)
 	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignLeading
-	row.name.Move(fyne.NewPos(30, y+(rh-26)/2-2))
-	row.name.Resize(fyne.NewSize(size.Width-scrollbarW-150, 24))
+	row.name.Move(fyne.NewPos(nameX, y+(rh-26)/2-2))
+	row.name.Resize(fyne.NewSize(nameW, 24))
 	row.name.Refresh()
 	row.size.Show()
 	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
@@ -992,14 +997,15 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	row.size.Show()
 	row.date.Show()
 	row.name.Alignment = fyne.TextAlignLeading
-	nameW := nameColumnW(size.Width) - 60 - indent
+	nameX := 23 + indent + iconSize + 5
+	nameW := nameColumnW(size.Width) - nameX - 16
 	if nameW < 10 {
 		nameW = 10
 	}
 	row.name.Text = elide(e.name, nameW, textSize)
 	row.name.Color = colText
 	textY := y + (rh-rowH)/2 + 1
-	row.name.Move(fyne.NewPos(44+indent, textY))
+	row.name.Move(fyne.NewPos(nameX, textY))
 	row.name.Resize(fyne.NewSize(nameW, 24))
 	row.name.Refresh()
 

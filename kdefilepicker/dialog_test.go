@@ -366,4 +366,14 @@ func TestScrollbarAndSliderDrag(t *testing.T) {
 	if slider.outer.Position().X < 60 {
 		t.Fatalf("slider handle did not move: %v", slider.outer.Position())
 	}
+
+	// A large icon must push the text to the right instead of overlapping it.
+	test.WidgetRenderer(d.files).Layout(d.files.Size())
+	if len(d.files.rows) == 0 {
+		t.Fatal("no file rows laid out")
+	}
+	row := d.files.rows[0]
+	if row.name.Position().X < row.icon.Position().X+row.icon.Size().Width {
+		t.Fatalf("name overlaps icon: icon %v width %v name x %v", row.icon.Position(), row.icon.Size().Width, row.name.Position().X)
+	}
 }
