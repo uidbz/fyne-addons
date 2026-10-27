@@ -359,4 +359,11 @@ func TestScrollbarAndSliderDrag(t *testing.T) {
 	if d.files.rowHeight() <= rowH {
 		t.Fatalf("details rows did not grow: %v", d.files.rowHeight())
 	}
+
+	// The renderer must reposition the handle when the value changes.
+	test.WidgetRenderer(slider) // ensure sliderRenderer and its circles exist
+	slider.setValue(1)
+	if slider.outer.Position().X < 60 {
+		t.Fatalf("slider handle did not move: %v", slider.outer.Position())
+	}
 }
