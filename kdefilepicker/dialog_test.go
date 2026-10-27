@@ -213,6 +213,7 @@ func TestMenusQuickFilterAndPreview(t *testing.T) {
 	defer w.Close()
 	w.Resize(fyne.NewSize(1400, 869))
 	d.window = w
+	d.noDelayedFocus = true
 
 	// Menus use the canvas and absolute object positions.
 	d.showFilterMenu()

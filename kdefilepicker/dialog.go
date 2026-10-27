@@ -74,6 +74,7 @@ type Dialog struct {
 	window            fyne.Window
 	pendingFocus      fyne.Focusable
 	pendingFocusTries int
+	noDelayedFocus    bool // set by tests to keep timers out of the test window
 
 	bg       *canvas.Rectangle
 	divider  *canvas.Rectangle
@@ -285,6 +286,24 @@ func (d *Dialog) requestFocus(obj fyne.Focusable) {
 	d.pendingFocus = obj
 	d.pendingFocusTries = 0
 	canvas.Refresh(d)
+	d.focusDelayed(obj)
+}
+
+// focusDelayed retries focus after the window has painted the newly shown
+// widget. Fyne only caches renderers during a paint, and the focus manager
+// walks cached renderers.
+func (d *Dialog) focusDelayed(obj fyne.Focusable) {
+	if d.noDelayedFocus {
+		return
+	}
+	time.AfterFunc(40*time.Millisecond, func() {
+		fyne.Do(func() {
+			if d.window == nil {
+				return
+			}
+			d.window.Canvas().Focus(obj)
+		})
+	})
 }
 
 // Close closes the window hosting the dialog, if any.
@@ -318,7 +337,9 @@ func (d *Dialog) createObjects() {
 // CreateRenderer implements fyne.Widget.
 func (d *Dialog) CreateRenderer() fyne.WidgetRenderer {
 	d.createObjects()
-	return &dialogRenderer{d: d}
+	r := &dialogRenderer{d: d}
+	r.Refresh()
+	return r
 }
 
 func (d *Dialog) wireToolbar() {
@@ -562,7 +583,7 @@ func (d *Dialog) beginPathEdit() {
 
 func (d *Dialog) endPathEdit() {
 	d.editing = false
-	canvas.Refresh(d)
+	d.requestFocus(d.bottom.name)
 }
 
 // ---------------------------------------------------------------------------

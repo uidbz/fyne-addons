@@ -55,7 +55,9 @@ func newPreviewPane() *previewPane {
 }
 
 func (p *previewPane) CreateRenderer() fyne.WidgetRenderer {
-	return &previewRenderer{p: p}
+	r := &previewRenderer{p: p}
+	r.Refresh()
+	return r
 }
 
 func (p *previewPane) MinSize() fyne.Size { return fyne.NewSize(280, 200) }

@@ -47,7 +47,9 @@ func newBottomPanel() *bottomPanel {
 }
 
 func (b *bottomPanel) CreateRenderer() fyne.WidgetRenderer {
-	return &bottomPanelRenderer{b: b}
+	r := &bottomPanelRenderer{b: b}
+	r.Refresh()
+	return r
 }
 
 func (b *bottomPanel) MinSize() fyne.Size { return fyne.NewSize(600, bottomH) }

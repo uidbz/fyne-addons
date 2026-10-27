@@ -54,7 +54,9 @@ func newToolbar() *toolbar {
 }
 
 func (t *toolbar) CreateRenderer() fyne.WidgetRenderer {
-	return &toolbarRenderer{t: t}
+	r := &toolbarRenderer{t: t}
+	r.Refresh()
+	return r
 }
 
 func (t *toolbar) MinSize() fyne.Size { return fyne.NewSize(700, toolbarH) }

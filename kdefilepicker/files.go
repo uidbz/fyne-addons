@@ -110,7 +110,9 @@ func (v *fileView) CreateRenderer() fyne.WidgetRenderer {
 	v.sortIcon = iconImage("go-up", colTextMuted, 12)
 	v.scrollBg = canvas.NewRectangle(colTransparent)
 	v.scroll = newRect(colScroll, colTransparent, 0, 3.5)
-	return &fileViewRenderer{v: v}
+	r := &fileViewRenderer{v: v}
+	r.Refresh()
+	return r
 }
 
 func (v *fileView) MinSize() fyne.Size { return fyne.NewSize(500, 300) }
