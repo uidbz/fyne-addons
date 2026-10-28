@@ -50,7 +50,6 @@ type Dialog struct {
 
 	mode       Mode
 	title      string
-	startDir   string
 	currentDir string
 	history    []string
 	histIdx    int
@@ -66,7 +65,6 @@ type Dialog struct {
 
 	quick        *lineEdit
 	quickVisible bool
-	quickLocked  bool
 
 	preview        *previewPane
 	previewVisible bool
@@ -87,11 +85,15 @@ type Dialog struct {
 	pendingFocusTries int
 	noDelayedFocus    bool // set by tests to keep timers out of the test window
 
-	bg       *canvas.Rectangle
-	divider  *canvas.Rectangle
-	msgBg    *canvas.Rectangle
-	msg      *canvas.Text
-	msgTimer *time.Timer
+	focusTimer *time.Timer
+	showTimer  *time.Timer
+	msgTimer   *time.Timer
+	destroyed  bool
+
+	bg      *canvas.Rectangle
+	divider *canvas.Rectangle
+	msgBg   *canvas.Rectangle
+	msg     *canvas.Text
 }
 
 // NewOpenDialog creates a dialog for opening an existing file.
@@ -112,7 +114,6 @@ func NewDirectoryDialog(startDir string) *Dialog {
 func newDialog(mode Mode, startDir, fileName string) *Dialog {
 	d := &Dialog{
 		mode:       mode,
-		startDir:   startDir,
 		filters:    []Filter{AllFiles},
 		showPlaces: true,
 	}
@@ -150,7 +151,7 @@ func newDialog(mode Mode, startDir, fileName string) *Dialog {
 	d.nav.onNavigate = func(path string) { d.openDir(path) }
 	d.nav.onDropdown = func() { d.showPathMenu() }
 	d.nav.onEdit = func() { d.beginPathEdit() }
-	d.files = newFileView(startDir)
+	d.files = newFileView()
 	d.files.onOpenDir = func(path string) { d.openDir(path) }
 	d.files.onSelect = func(e fileEntry) {
 		d.bottom.name.SetText(e.name)
@@ -168,6 +169,7 @@ func newDialog(mode Mode, startDir, fileName string) *Dialog {
 	d.bottom.cancel.tap = func() { d.cancel() }
 	d.bottom.open.tap = func() { d.accept() }
 	d.bottom.onFilter = func(e *fyne.PointEvent) { d.showFilterMenu() }
+	d.bottom.filter.onClear = func() { d.SetSelectedFilter(0) }
 
 	// Path editor (Ctrl+L).
 	d.pathEdit = newLineEdit()
@@ -182,7 +184,10 @@ func newDialog(mode Mode, startDir, fileName string) *Dialog {
 	// Quick filter.
 	d.quick = newLineEdit()
 	d.quick.SetPlaceholder("Filter by name…")
-	d.quick.onChanged = func(text string) { d.files.SetFilter(text) }
+	d.quick.onChanged = func(text string) {
+		d.files.SetFilter(text)
+		d.refreshSelectionState()
+	}
 	d.quick.onEscape = func() { d.setQuickFilter(false) }
 
 	d.bottom.SetModeOpenLabel(d.openLabel())
@@ -223,11 +228,10 @@ func (d *Dialog) SetFilters(filters []Filter) {
 		filters = []Filter{AllFiles}
 	}
 	d.filters = filters
-	if d.filterIdx >= len(filters) {
-		d.filterIdx = 0
-	}
+	d.filterIdx = 0
 	d.bottom.SetFilterLabel(filters[d.filterIdx].Name)
 	d.files.SetPatterns(filters[d.filterIdx].Patterns)
+	d.refreshSelectionState()
 }
 
 // SetSelectedFilter selects the filter at index.
@@ -238,6 +242,7 @@ func (d *Dialog) SetSelectedFilter(index int) {
 	d.filterIdx = index
 	d.bottom.SetFilterLabel(d.filters[index].Name)
 	d.files.SetPatterns(d.filters[index].Patterns)
+	d.refreshSelectionState()
 }
 
 // SelectedFilter returns the index of the active filter.
@@ -254,6 +259,7 @@ func (d *Dialog) SingleClickDirectories() bool { return d.files.singleClick }
 func (d *Dialog) SetShowHidden(show bool) {
 	d.showHidden = show
 	d.files.SetShowHidden(show)
+	d.refreshSelectionState()
 }
 
 // SetDirectory navigates to dir.
@@ -310,12 +316,13 @@ func (d *Dialog) ShowInWindow(w fyne.Window) {
 // The first layout happens before the canvas' focus manager has traversed
 // the new content tree; retry once the content is on screen.
 func (d *Dialog) focusNameAfterPaint() {
-	if d.noDelayedFocus {
+	if d.noDelayedFocus || d.destroyed {
 		return
 	}
-	time.AfterFunc(250*time.Millisecond, func() {
+	d.stopTimer(&d.showTimer)
+	d.showTimer = time.AfterFunc(250*time.Millisecond, func() {
 		fyne.Do(func() {
-			if d.window == nil {
+			if d.destroyed || d.window == nil || d.window.Canvas() == nil {
 				return
 			}
 			d.window.Canvas().Focus(d.bottom.name)
@@ -328,8 +335,10 @@ func (d *Dialog) focusNameAfterPaint() {
 func (d *Dialog) FocusName() { d.requestFocus(d.bottom.name) }
 
 func (d *Dialog) requestFocus(obj fyne.Focusable) {
+	if d.destroyed {
+		return
+	}
 	d.pendingFocus = obj
-	d.pendingFocusTries = 0
 	d.Refresh()
 	d.focusDelayed(obj)
 }
@@ -338,12 +347,13 @@ func (d *Dialog) requestFocus(obj fyne.Focusable) {
 // widget. Fyne only caches renderers during a paint, and the focus manager
 // walks cached renderers.
 func (d *Dialog) focusDelayed(obj fyne.Focusable) {
-	if d.noDelayedFocus {
+	if d.noDelayedFocus || d.destroyed {
 		return
 	}
-	time.AfterFunc(40*time.Millisecond, func() {
+	d.stopTimer(&d.focusTimer)
+	d.focusTimer = time.AfterFunc(40*time.Millisecond, func() {
 		fyne.Do(func() {
-			if d.window == nil {
+			if d.destroyed || d.window == nil || d.window.Canvas() == nil || d.pendingFocus != obj {
 				return
 			}
 			d.window.Canvas().Focus(obj)
@@ -351,9 +361,19 @@ func (d *Dialog) focusDelayed(obj fyne.Focusable) {
 	})
 }
 
+func (d *Dialog) stopTimer(timer **time.Timer) {
+	if *timer != nil {
+		(*timer).Stop()
+		*timer = nil
+	}
+}
+
 // Close dismisses an overlay presentation or closes the window hosting the
 // dialog, whichever is active.
 func (d *Dialog) Close() {
+	d.stopTimer(&d.focusTimer)
+	d.stopTimer(&d.showTimer)
+	d.stopTimer(&d.msgTimer)
 	if d.overlayShown {
 		d.Dismiss()
 		return
@@ -361,6 +381,16 @@ func (d *Dialog) Close() {
 	if d.window != nil {
 		d.window.Close()
 	}
+}
+
+// Destroy stops pending timers owned by the dialog. The dialog must not be
+// reused after Destroy is called.
+func (d *Dialog) Destroy() {
+	d.destroyed = true
+	d.pendingFocus = nil
+	d.stopTimer(&d.focusTimer)
+	d.stopTimer(&d.showTimer)
+	d.stopTimer(&d.msgTimer)
 }
 
 // Accept accepts the current selection (same as pressing the Open button).
@@ -371,17 +401,62 @@ func (d *Dialog) Cancel() { d.cancel() }
 
 // RefreshDir reloads the current directory.
 func (d *Dialog) RefreshDir() {
-	d.loadDir(d.currentDir)
+	name := d.bottom.name.Text()
+	selected := ""
+	if entry, ok := d.files.selectedEntry(); ok {
+		selected = entry.path
+	}
+	offset := d.files.offset
+
+	if !d.loadDir(d.currentDir) {
+		return
+	}
+	if selected != "" {
+		d.files.selectPath(selected)
+	}
+	d.files.offset = offset
+	d.files.clampOffset()
+	d.bottom.name.SetText(name)
+	d.bottom.name.cursor = len([]rune(name))
+	d.files.Refresh()
+	d.updateOpenState()
+	d.updatePreview()
+}
+
+// refreshSelectionState synchronises the preview and Open button with a file
+// list whose contents changed (for example after a filter was applied).
+func (d *Dialog) refreshSelectionState() {
+	if _, ok := d.files.selectedEntry(); !ok {
+		d.preview.Clear()
+	} else {
+		d.updatePreview()
+	}
+	d.updateOpenState()
 }
 
 func (d *Dialog) createObjects() {
-	d.bg = canvas.NewRectangle(colWindow)
-	d.divider = canvas.NewRectangle(colFrame)
-	d.msgBg = canvas.NewRectangle(colPlaceSelection)
-	d.msg = canvas.NewText("", colText)
-	d.msg.TextSize = textSize
-	d.msgBg.Hide()
-	d.msg.Hide()
+	if d.bg == nil {
+		d.bg = canvas.NewRectangle(colWindow)
+	}
+	if d.divider == nil {
+		d.divider = canvas.NewRectangle(colFrame)
+	}
+	d.ensureMessageObjects()
+}
+
+// ensureMessageObjects creates the error-banner objects on demand. They are
+// needed by showError, which can run before the first renderer exists (for
+// example when the start directory cannot be read).
+func (d *Dialog) ensureMessageObjects() {
+	if d.msgBg == nil {
+		d.msgBg = canvas.NewRectangle(colPlaceSelection)
+		d.msgBg.Hide()
+	}
+	if d.msg == nil {
+		d.msg = canvas.NewText("", colText)
+		d.msg.TextSize = textSize
+		d.msg.Hide()
+	}
 }
 
 // CreateRenderer implements fyne.Widget.
@@ -397,7 +472,7 @@ func (d *Dialog) wireToolbar() {
 	t.SetAction("back", d.back)
 	t.SetAction("forward", d.forward)
 	t.SetAction("up", d.up)
-	t.SetAction("reload", func() { d.loadDir(d.currentDir) })
+	t.SetAction("reload", d.RefreshDir)
 	t.SetAction("icons", func() { d.setView(2) })
 	t.SetAction("compact", func() { d.setView(1) })
 	t.SetAction("details", func() { d.setView(0) })
@@ -406,25 +481,25 @@ func (d *Dialog) wireToolbar() {
 	t.SetAction("bookmarks", func() { d.showBookmarksMenu() })
 	t.SetAction("zoomout", func() { d.changeZoom(-1) })
 	t.SetAction("zoomin", func() { d.changeZoom(1) })
-	t.SetAction("newfolder", d.newFolder)
 	t.SetAction("options", func() { d.showOptionsMenu() })
-	t.SetAction("search", func() { d.setQuickFilter(!d.quickVisible) })
 	t.slider.changed = func() { d.applyZoom(t.slider.value) }
 	t.SetView(0)
 }
 
 func (d *Dialog) setView(mode int) {
+	if mode < 0 || mode > 2 {
+		return
+	}
+	if mode == 2 && d.files.iconSize < 48 {
+		d.files.iconSize = 64
+	}
 	d.files.SetViewMode(mode)
 	if mode == 2 {
-		if d.files.iconSize < 48 {
-			d.files.iconSize = 64
-		}
 		d.setSliderFor(d.files.iconSize)
 	} else {
 		d.setSliderFor(d.files.detailIconSize)
 	}
 	d.toolbar.SetView(mode)
-	d.files.Refresh()
 }
 
 func (d *Dialog) setSliderFor(size float32) {
@@ -460,45 +535,43 @@ func (d *Dialog) togglePreview() {
 	d.setPreview(!d.previewVisible)
 }
 
-func (d *Dialog) loadDir(dir string) {
+// loadDir lists dir and applies it without touching the navigation history.
+// It reports whether the directory could be read.
+func (d *Dialog) loadDir(dir string) bool {
 	entries, err := readEntries(dir, true)
 	if err != nil {
 		d.showError(err.Error())
-		return
+		return false
 	}
+	d.applyDir(dir, entries)
+	return true
+}
+
+// applyDir updates every view for an already-loaded directory.
+func (d *Dialog) applyDir(dir string, entries []fileEntry) {
 	d.currentDir = dir
-	d.files.SetDir(dir, entries)
-	d.files.SetShowHidden(d.showHidden)
-	d.files.SetPatterns(d.filters[d.filterIdx].Patterns)
+	d.files.SetDir(entries)
 	d.nav.SetPath(dir)
 	d.places.SetCurrent(dir)
 	d.bottom.name.SetText("")
+	d.preview.Clear()
 	d.updateNav()
 	d.updateOpenState()
-	d.preview.Clear()
 	d.syncPathEdit()
 }
 
 func (d *Dialog) openDir(dir string) {
-	dir = strings.TrimSpace(dir)
-	if dir == "" {
-		return
-	}
-	if dir == "~" || strings.HasPrefix(dir, "~/") {
-		if home, err := os.UserHomeDir(); err == nil {
-			dir = filepath.Join(home, strings.TrimPrefix(dir, "~/"))
-		}
-	}
-	if !filepath.IsAbs(dir) {
-		dir = filepath.Join(d.currentDir, dir)
-	}
-	dir = filepath.Clean(dir)
-	if dir == d.currentDir {
+	dir = resolvePath(dir, d.currentDir)
+	if dir == "" || dir == d.currentDir {
 		return
 	}
 	st, err := os.Stat(dir)
-	if err != nil || !st.IsDir() {
+	if err != nil {
 		d.showError("The folder " + dir + " does not exist.")
+		return
+	}
+	if !st.IsDir() {
+		d.showError(dir + " is not a folder.")
 		return
 	}
 	entries, err := readEntries(dir, true)
@@ -506,19 +579,30 @@ func (d *Dialog) openDir(dir string) {
 		d.showError(err.Error())
 		return
 	}
-	d.currentDir = dir
 	d.history = append(d.history[:d.histIdx+1], dir)
 	d.histIdx = len(d.history) - 1
-	d.files.SetDir(dir, entries)
-	d.files.SetShowHidden(d.showHidden)
-	d.files.SetPatterns(d.filters[d.filterIdx].Patterns)
-	d.nav.SetPath(dir)
-	d.places.SetCurrent(dir)
-	d.bottom.name.SetText("")
-	d.preview.Clear()
-	d.updateNav()
-	d.updateOpenState()
-	d.syncPathEdit()
+	d.applyDir(dir, entries)
+}
+
+// resolvePath expands a leading ~ and resolves relative paths against base.
+func resolvePath(path, base string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~"+string(filepath.Separator)) {
+		if home, err := os.UserHomeDir(); err == nil {
+			if path == "~" {
+				path = home
+			} else {
+				path = filepath.Join(home, path[2:])
+			}
+		}
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(base, path)
+	}
+	return filepath.Clean(path)
 }
 
 func (d *Dialog) back() {
@@ -564,11 +648,7 @@ func (d *Dialog) accept() {
 	if sel, ok := d.files.selectedEntry(); ok && (name == "" || name == sel.name) {
 		target = sel.path
 	} else if name != "" {
-		if filepath.IsAbs(name) {
-			target = filepath.Clean(name)
-		} else {
-			target = filepath.Join(d.currentDir, name)
-		}
+		target = resolvePath(name, d.currentDir)
 	}
 	if target == "" {
 		if d.mode == ModeDirectory {
@@ -615,16 +695,21 @@ func (d *Dialog) cancel() {
 }
 
 func (d *Dialog) showError(text string) {
+	if d.destroyed {
+		return
+	}
+	d.ensureMessageObjects()
 	d.msg.Text = text
 	d.msgBg.Show()
 	d.msg.Show()
 	d.msg.Refresh()
 	d.msgBg.Refresh()
-	if d.msgTimer != nil {
-		d.msgTimer.Stop()
-	}
+	d.stopTimer(&d.msgTimer)
 	d.msgTimer = time.AfterFunc(6*time.Second, func() {
 		fyne.Do(func() {
+			if d.destroyed {
+				return
+			}
 			d.msgBg.Hide()
 			d.msg.Hide()
 			canvas.Refresh(d)
@@ -635,16 +720,15 @@ func (d *Dialog) showError(text string) {
 
 func (d *Dialog) setQuickFilter(show bool) {
 	d.quickVisible = show
+	d.quick.SetPlaceholder("Filter by name…")
+	// Clearing the text also clears the file filter through onChanged.
+	d.quick.SetText("")
 	if show {
-		d.quick.SetText("")
-		d.quick.SetPlaceholder("Filter by name…")
 		d.requestFocus(d.quick)
 	} else {
-		d.files.SetFilter("")
 		d.requestFocus(d.bottom.name)
 	}
-	d.files.SetFilter("")
-	d.Refresh()
+	d.refreshSelectionState()
 }
 
 func (d *Dialog) beginPathEdit() {

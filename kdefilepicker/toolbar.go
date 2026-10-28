@@ -5,7 +5,6 @@ package kdefilepicker
 import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
-	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -16,8 +15,7 @@ type toolbar struct {
 	icons, compact, details   *iconButton
 	preview, sort, bookmarks  *iconButton
 	zoomOut, zoomIn           *iconButton
-	newFolder, options        *iconButton
-	search                    *iconButton
+	options                   *iconButton
 	slider                    *zoomSlider
 	activeView                int
 
@@ -40,9 +38,7 @@ func newToolbar() *toolbar {
 	t.bookmarks = newIconButton("bookmarks", "Bookmarks", nil)
 	t.zoomOut = newIconButton("zoom-out", "Zoom Out", nil)
 	t.zoomIn = newIconButton("zoom-in", "Zoom In", nil)
-	t.newFolder = newIconButton("folder-new", "New Folder", nil)
 	t.options = newIconButton("configure", "Options", nil)
-	t.search = newIconButton("edit-find", "Search", nil)
 	t.slider = newZoomSlider(nil)
 	t.separators = []*canvas.Rectangle{
 		canvas.NewRectangle(colBorder),
@@ -87,12 +83,8 @@ func (t *toolbar) SetAction(name string, fn func()) {
 		t.zoomOut.tap = fn
 	case "zoomin":
 		t.zoomIn.tap = fn
-	case "newfolder":
-		t.newFolder.tap = fn
 	case "options":
 		t.options.tap = fn
-	case "search":
-		t.search.tap = fn
 	}
 }
 
@@ -155,8 +147,6 @@ func (r *toolbarRenderer) Layout(size fyne.Size) {
 	zoomOutX := sliderX - 27
 	r.t.zoomOut.Resize(fyne.NewSize(30, 30))
 	r.t.zoomOut.Move(fyne.NewPos(zoomOutX, 8))
-	r.t.search.Hide()
-	r.t.newFolder.Hide()
 }
 func (r *toolbarRenderer) MinSize() fyne.Size { return fyne.NewSize(700, toolbarH) }
 
@@ -177,5 +167,3 @@ func (r *toolbarRenderer) Refresh() {
 
 func (r *toolbarRenderer) Objects() []fyne.CanvasObject { return r.objs }
 func (r *toolbarRenderer) Destroy()                     {}
-
-var _ = desktop.PointerCursor

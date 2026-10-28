@@ -26,6 +26,7 @@ type breadcrumb struct {
 	path       string
 	home       string
 	crumbs     []crumb
+	display    []crumb
 	hover      int
 	onNavigate func(string)
 	onDropdown func()
@@ -56,6 +57,7 @@ func (b *breadcrumb) MinSize() fyne.Size { return fyne.NewSize(200, 37) }
 
 func (b *breadcrumb) SetPath(path string) {
 	b.path = path
+	b.hover = -1
 	b.rebuild()
 	b.measure()
 	b.Refresh()
@@ -112,20 +114,19 @@ func (b *breadcrumb) rebuild() {
 }
 
 func (b *breadcrumb) Tapped(e *fyne.PointEvent) {
-	if e.Position.X < 32 {
-		if b.onDropdown != nil {
-			b.onDropdown()
-		}
-		return
-	}
-	for i, c := range b.crumbs {
+	// Crumbs take precedence over the chevron: the first hit box starts close
+	// to the dropdown arrow and must remain clickable.
+	for _, c := range b.display {
 		if e.Position.X >= c.x && e.Position.X <= c.x+c.w {
 			if b.onNavigate != nil {
 				b.onNavigate(c.path)
 			}
-			_ = i
 			return
 		}
+	}
+	if e.Position.X < 22 && b.onDropdown != nil {
+		b.onDropdown()
+		return
 	}
 	// Like KDE: a click on the location bar that hits no segment switches
 	// the bar to an editable path field.
@@ -138,7 +139,7 @@ func (b *breadcrumb) MouseIn(*desktop.MouseEvent) {}
 
 func (b *breadcrumb) MouseMoved(e *desktop.MouseEvent) {
 	idx := -1
-	for i, c := range b.crumbs {
+	for i, c := range b.display {
 		if e.Position.X >= c.x && e.Position.X <= c.x+c.w {
 			idx = i
 			break
@@ -167,11 +168,12 @@ func (r *breadcrumbRenderer) Layout(size fyne.Size) {
 	b.arrow.Resize(fyne.NewSize(12, 12))
 	b.arrow.Move(fyne.NewPos(10, (size.Height-12)/2))
 
-	// Recreate segment objects as the path changes.
-	if len(b.texts) != len(b.crumbs) {
-		b.texts = make([]*canvas.Text, len(b.crumbs))
-		b.seps = make([]*canvas.Image, len(b.crumbs))
-		for i := range b.crumbs {
+	b.display = b.fitCrumbs(size.Width)
+	// Recreate segment objects as the displayed path changes.
+	if len(b.texts) != len(b.display) {
+		b.texts = make([]*canvas.Text, len(b.display))
+		b.seps = make([]*canvas.Image, len(b.display))
+		for i := range b.display {
 			t := canvas.NewText("", colText)
 			t.TextSize = textSize
 			b.texts[i] = t
@@ -181,39 +183,40 @@ func (r *breadcrumbRenderer) Layout(size fyne.Size) {
 	}
 
 	x := float32(22)
-	for i, c := range b.crumbs {
+	for i, c := range b.display {
 		t := b.texts[i]
 		t.Text = c.label
-		t.TextStyle = fyne.TextStyle{Bold: i == len(b.crumbs)-1}
+		style := fyne.TextStyle{Bold: i == len(b.display)-1}
+		t.TextStyle = style
 		w := c.tw
 		if w == 0 {
-			w = fyne.MeasureText(c.label, textSize, t.TextStyle).Width
+			w = fyne.MeasureText(c.label, textSize, style).Width
 		}
-		b.crumbs[i].x = x - 4
-		b.crumbs[i].w = w + 8
+		b.display[i].x = x
+		b.display[i].w = w + 8
 		t.Move(fyne.NewPos(x, centerY(size.Height, measureHeight())-1))
 		t.Resize(fyne.NewSize(w+4, 18))
 		t.Color = colText
 		t.Refresh()
 		x += w + 8
-		if i < len(b.crumbs)-1 {
+		if i < len(b.display)-1 {
 			sep := b.seps[i]
-			sep.Show()
+			showObject(sep)
 			sep.Resize(fyne.NewSize(10, 10))
 			sep.Move(fyne.NewPos(x, (size.Height-10)/2))
 			x += 16
 		} else {
-			b.seps[i].Hide()
+			hideObject(b.seps[i])
 		}
 	}
-	if b.hover >= 0 && b.hover < len(b.crumbs) {
-		c := b.crumbs[b.hover]
-		b.hoverRect.Show()
+	if b.hover >= 0 && b.hover < len(b.display) {
+		c := b.display[b.hover]
+		showObject(b.hoverRect)
 		b.hoverRect.FillColor = colHover
 		b.hoverRect.Resize(fyne.NewSize(c.w, size.Height-10))
-		b.hoverRect.Move(fyne.NewPos(c.x, 5))
+		b.hoverRect.Move(fyne.NewPos(c.x-4, 5))
 	} else {
-		b.hoverRect.Hide()
+		hideObject(b.hoverRect)
 	}
 
 	r.objs = []fyne.CanvasObject{b.bg, b.arrow, b.hoverRect}
@@ -223,6 +226,59 @@ func (r *breadcrumbRenderer) Layout(size fyne.Size) {
 			r.objs = append(r.objs, b.seps[i])
 		}
 	}
+}
+
+// fitCrumbs returns the visible crumb list, collapsing leading segments into
+// an ellipsis when the path would otherwise overflow the navigator.
+func (b *breadcrumb) fitCrumbs(width float32) []crumb {
+	if len(b.crumbs) == 0 {
+		return nil
+	}
+	const startX, endPad, sepWidth = float32(22), float32(4), float32(16)
+	avail := width - startX - endPad
+	if avail < 20 {
+		avail = 20
+	}
+	crumbWidth := func(c crumb, bold bool) float32 {
+		return fyne.MeasureText(c.label, textSize, fyne.TextStyle{Bold: bold}).Width + 8
+	}
+	total := func(from int, ellipsis bool) float32 {
+		var w float32
+		if ellipsis {
+			w += fyne.MeasureText("…", textSize, fyne.TextStyle{}).Width + 8 + sepWidth
+		}
+		for i := from; i < len(b.crumbs); i++ {
+			w += crumbWidth(b.crumbs[i], i == len(b.crumbs)-1)
+			if i < len(b.crumbs)-1 {
+				w += sepWidth
+			}
+		}
+		return w
+	}
+	start := 0
+	for start < len(b.crumbs)-1 && total(start, start > 0) > avail {
+		start++
+	}
+	display := make([]crumb, 0, len(b.crumbs)-start+1)
+	if start > 0 {
+		display = append(display, crumb{label: "…", path: b.crumbs[start-1].path})
+	}
+	display = append(display, b.crumbs[start:]...)
+
+	// Even a single trailing crumb can be wider than the navigator; elide it.
+	var displayWidth float32
+	for i, c := range display {
+		displayWidth += crumbWidth(c, i == len(display)-1)
+		if i < len(display)-1 {
+			displayWidth += sepWidth
+		}
+	}
+	if displayWidth > avail && len(display) > 0 {
+		last := display[len(display)-1]
+		last.label = elide(last.label, avail-16, textSize)
+		display = []crumb{last}
+	}
+	return display
 }
 
 func (r *breadcrumbRenderer) MinSize() fyne.Size { return fyne.NewSize(200, 37) }

@@ -3,10 +3,12 @@
 package kdefilepicker
 
 import (
+	"image/color"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -34,7 +36,6 @@ type fileEntry struct {
 	name      string
 	path      string
 	isDir     bool
-	isLink    bool
 	size      int64
 	modTime   time.Time
 	itemCount int
@@ -45,7 +46,6 @@ type fileEntry struct {
 type fileView struct {
 	widget.BaseWidget
 
-	dir          string
 	entries      []fileEntry
 	filtered     []fileEntry
 	selected     int
@@ -98,11 +98,15 @@ type fileRow struct {
 	name *canvas.Text
 	size *canvas.Text
 	date *canvas.Text
+
+	// Cached inputs so layout can skip expensive icon lookups, text shaping
+	// and repaints when a row is only being re-laid out for hover/selection.
+	iconName string
+	expName  string
 }
 
-func newFileView(dir string) *fileView {
+func newFileView() *fileView {
 	v := &fileView{
-		dir:            dir,
 		selected:       -1,
 		hover:          -1,
 		ascending:      true,
@@ -246,8 +250,7 @@ func (h *colHandle) DoubleTapped(*fyne.PointEvent) {
 	h.view.Refresh()
 }
 
-func (v *fileView) SetDir(dir string, entries []fileEntry) {
-	v.dir = dir
+func (v *fileView) SetDir(entries []fileEntry) {
 	v.entries = entries
 	v.selected = -1
 	v.hover = -1
@@ -263,8 +266,20 @@ func (v *fileView) SetShowHidden(show bool) {
 }
 
 func (v *fileView) SetPatterns(patterns []string) {
-	v.patterns = patterns
+	v.patterns = compilePatterns(patterns)
 	v.applyFilter()
+}
+
+// compilePatterns flattens the Filter.Patterns spelling (single globs or
+// space/semicolon separated groups) once instead of on every entry.
+func compilePatterns(groups []string) []string {
+	var out []string
+	for _, group := range groups {
+		for _, pattern := range strings.FieldsFunc(group, func(r rune) bool { return r == ';' || r == ' ' }) {
+			out = append(out, strings.ToLower(pattern))
+		}
+	}
+	return out
 }
 
 func (v *fileView) SetFilter(text string) {
@@ -279,6 +294,10 @@ func (v *fileView) SetSort(field sortField, ascending bool) {
 }
 
 func (v *fileView) applyFilter() {
+	selectedPath := ""
+	if entry, ok := v.selectedEntry(); ok {
+		selectedPath = entry.path
+	}
 	base := v.filterSort(v.entries)
 	out := make([]fileEntry, 0, len(base))
 	var add func(list []fileEntry, depth int)
@@ -294,8 +313,9 @@ func (v *fileView) applyFilter() {
 	}
 	add(base, 0)
 	v.filtered = out
-	if v.selected >= len(v.filtered) {
-		v.selected = -1
+	v.selected = -1
+	if selectedPath != "" {
+		v.selectPath(selectedPath)
 	}
 	v.clampOffset()
 	v.Refresh()
@@ -320,23 +340,53 @@ func (v *fileView) filterSort(entries []fileEntry) []fileEntry {
 		if v.foldersFirst && a.isDir != b.isDir {
 			return a.isDir
 		}
-		var less bool
-		switch v.sortField {
-		case sortBySize:
-			less = a.size < b.size
-		case sortByDate:
-			less = a.modTime.Before(b.modTime)
-		case sortByType:
-			less = strings.ToLower(filepath.Ext(a.name)) < strings.ToLower(filepath.Ext(b.name))
-		default:
-			less = strings.ToLower(a.name) < strings.ToLower(b.name)
-		}
+		cmp := compareEntries(a, b, v.sortField)
 		if v.ascending {
-			return less
+			return cmp < 0
 		}
-		return !less
+		return cmp > 0
 	})
 	return filtered
+}
+
+// compareEntries provides a total order for the supported sort fields. Size,
+// date and type ties fall back to the name so that equal keys keep a
+// deterministic order in both directions.
+func compareEntries(a, b fileEntry, field sortField) int {
+	switch field {
+	case sortBySize:
+		if a.size != b.size {
+			if a.size < b.size {
+				return -1
+			}
+			return 1
+		}
+	case sortByDate:
+		if !a.modTime.Equal(b.modTime) {
+			if a.modTime.Before(b.modTime) {
+				return -1
+			}
+			return 1
+		}
+	case sortByType:
+		ea := strings.ToLower(filepath.Ext(a.name))
+		eb := strings.ToLower(filepath.Ext(b.name))
+		if ea != eb {
+			if ea < eb {
+				return -1
+			}
+			return 1
+		}
+	}
+	an := strings.ToLower(a.name)
+	bn := strings.ToLower(b.name)
+	switch {
+	case an < bn:
+		return -1
+	case an > bn:
+		return 1
+	}
+	return 0
 }
 
 func (v *fileView) children(path string) []fileEntry {
@@ -355,18 +405,12 @@ func (v *fileView) toggleExpanded(e fileEntry) {
 	if !e.isDir || v.viewMode != 0 {
 		return
 	}
-	selPath := ""
-	if sel, ok := v.selectedEntry(); ok {
-		selPath = sel.path
-	}
 	if v.expanded[e.path] {
 		delete(v.expanded, e.path)
 	} else {
 		v.expanded[e.path] = true
 	}
 	v.applyFilter()
-	v.selectPath(selPath)
-	v.Refresh()
 }
 
 func (v *fileView) selectPath(path string) {
@@ -387,13 +431,9 @@ func (v *fileView) SetViewMode(mode int) {
 	v.applyFilter()
 }
 
-func (v *fileView) entryAt(y float32) int {
-	return v.entryAtPoint(0, y)
-}
-
 func (v *fileView) entryAtPoint(x, y float32) int {
 	if v.viewMode == 2 {
-		cols, cellW, cellH := v.grid(sizeOf(v))
+		cols, cellW, cellH := v.grid(v.Size())
 		if cols < 1 {
 			return -1
 		}
@@ -442,8 +482,6 @@ func (v *fileView) rowHeight() float32 {
 	}
 	return rowH
 }
-
-func sizeOf(v *fileView) fyne.Size { return v.Size() }
 
 func (v *fileView) grid(sz fyne.Size) (int, float32, float32) {
 	contentW := sz.Width - scrollbarW
@@ -536,7 +574,7 @@ func (v *fileView) MouseMoved(e *desktop.MouseEvent) {
 		v.scrollToY(e.Position.Y)
 		return
 	}
-	idx := v.entryAt(e.Position.Y)
+	idx := v.entryAtPoint(e.Position.X, e.Position.Y)
 	if idx != v.hover {
 		v.hover = idx
 		v.Refresh()
@@ -632,29 +670,41 @@ func (v *fileView) FocusGained() { v.focused = true; v.Refresh() }
 func (v *fileView) FocusLost()   { v.focused = false; v.Refresh() }
 
 func (v *fileView) TypedKey(ev *fyne.KeyEvent) {
+	selectedChanged := false
+	offsetChanged := false
 	switch ev.Name {
 	case fyne.KeyDown:
 		if v.selected < len(v.filtered)-1 {
 			v.selected++
 			v.scrollToSelected()
+			selectedChanged, offsetChanged = true, true
 		}
 	case fyne.KeyUp:
 		if v.selected > 0 {
 			v.selected--
 			v.scrollToSelected()
+			selectedChanged, offsetChanged = true, true
 		}
 	case fyne.KeyHome:
-		v.selected = 0
-		v.scrollToSelected()
+		if len(v.filtered) > 0 {
+			v.selected = 0
+			v.scrollToSelected()
+			selectedChanged, offsetChanged = true, true
+		}
 	case fyne.KeyEnd:
-		v.selected = len(v.filtered) - 1
-		v.scrollToSelected()
+		if len(v.filtered) > 0 {
+			v.selected = len(v.filtered) - 1
+			v.scrollToSelected()
+			selectedChanged, offsetChanged = true, true
+		}
 	case fyne.KeyPageDown:
 		v.offset += float32(v.visibleRows()) * v.rowHeight()
 		v.clampOffset()
+		offsetChanged = true
 	case fyne.KeyPageUp:
 		v.offset -= float32(v.visibleRows()) * v.rowHeight()
 		v.clampOffset()
+		offsetChanged = true
 	case fyne.KeyEscape:
 		if v.onEscape != nil {
 			v.onEscape()
@@ -671,10 +721,12 @@ func (v *fileView) TypedKey(ev *fyne.KeyEvent) {
 			}
 		}
 	}
-	if v.selected >= 0 && v.selected < len(v.filtered) && v.onSelect != nil {
+	if selectedChanged && v.selected >= 0 && v.selected < len(v.filtered) && v.onSelect != nil {
 		v.onSelect(v.filtered[v.selected])
 	}
-	v.Refresh()
+	if selectedChanged || offsetChanged {
+		v.Refresh()
+	}
 }
 
 func (v *fileView) Scrolled(ev *fyne.ScrollEvent) {
@@ -702,7 +754,6 @@ func (v *fileView) visibleRows() int {
 	return int(h / rh)
 }
 
-func (v *fileView) floorOffset() float32 { return 0 }
 func (v *fileView) maxOffset() float32 {
 	viewH := v.Size().Height - 8
 	if v.viewMode == 0 {
@@ -729,7 +780,7 @@ func (v *fileView) maxOffset() float32 {
 }
 
 func (v *fileView) clampOffset() {
-	v.offset = clamp(v.offset, v.floorOffset(), v.maxOffset())
+	v.offset = clamp(v.offset, 0, v.maxOffset())
 }
 
 func (v *fileView) scrollToSelected() {
@@ -781,11 +832,6 @@ func (v *fileView) selectedEntry() (fileEntry, bool) {
 	return v.filtered[v.selected], true
 }
 
-func (v *fileView) clearSelection() {
-	v.selected = -1
-	v.Refresh()
-}
-
 // ---------------------------------------------------------------------------
 // Renderer.
 
@@ -797,6 +843,11 @@ type fileViewRenderer struct {
 func (r *fileViewRenderer) rowObjects() []fyne.CanvasObject {
 	out := make([]fyne.CanvasObject, 0, len(r.v.rows)*7)
 	for _, row := range r.v.rows {
+		// Spare/hidden rows stay allocated for reuse but are not handed to
+		// the painter every frame.
+		if !row.bg.Visible() {
+			continue
+		}
 		out = append(out, row.bg, row.sel, row.exp, row.icon, row.name, row.size, row.date)
 	}
 	return out
@@ -820,6 +871,54 @@ func (r *fileViewRenderer) ensureRows(n int) {
 	}
 }
 
+func showObject(o fyne.CanvasObject) {
+	if !o.Visible() {
+		o.Show()
+	}
+}
+
+func hideObject(o fyne.CanvasObject) {
+	if o.Visible() {
+		o.Hide()
+	}
+}
+
+func setFill(r *canvas.Rectangle, clr color.Color) {
+	if r.FillColor != clr {
+		r.FillColor = clr
+		r.Refresh()
+	}
+}
+
+func setRowText(t *canvas.Text, text string, align fyne.TextAlign) {
+	if t.Text != text {
+		t.Text = text
+		t.Refresh()
+	}
+	if t.Alignment != align {
+		t.Alignment = align
+		t.Refresh()
+	}
+}
+
+func setRowIcon(row *fileRow, name string) {
+	if row.iconName == name {
+		return
+	}
+	row.iconName = name
+	row.icon.Resource = iconResource(name, colText)
+	row.icon.Refresh()
+}
+
+func setRowExpandedIcon(row *fileRow, name string) {
+	if row.expName == name {
+		return
+	}
+	row.expName = name
+	row.exp.Resource = iconResource(name, colTextMuted)
+	row.exp.Refresh()
+}
+
 func (r *fileViewRenderer) Layout(size fyne.Size) {
 	v := r.v
 	v.bg.Resize(size)
@@ -839,6 +938,7 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 	}
 
 	slot := 0
+	needed := 0
 	if v.viewMode == 2 {
 		cols, cellW, cellH := v.grid(size)
 		if cols < 1 {
@@ -854,6 +954,7 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 		if count < 1 {
 			count = 1
 		}
+		needed = count
 		r.ensureRows(count)
 		for row := 0; row < rows; row++ {
 			for col := 0; col < cols; col++ {
@@ -881,6 +982,7 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 		if count < 1 {
 			count = 1
 		}
+		needed = count
 		r.ensureRows(count)
 		for idx := first; idx < len(v.filtered) && slot < count; idx, slot = idx+1, slot+1 {
 			row := v.rows[slot]
@@ -895,16 +997,26 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 	for ; slot < len(v.rows); slot++ {
 		r.hideRow(v.rows[slot])
 	}
+	// Do not keep a stale, oversized row pool after a view/zoom change that
+	// needs fewer cells; a small spare avoids re-allocating rows while
+	// scrolling.
+	maxKeep := needed + 8
+	if maxKeep < 16 {
+		maxKeep = 16
+	}
+	if len(v.rows) > maxKeep {
+		v.rows = v.rows[:maxKeep]
+	}
 
 	if v.maxOffset() <= 0 {
-		v.scrollBg.Hide()
-		v.scroll.Hide()
+		hideObject(v.scrollBg)
+		hideObject(v.scroll)
 	} else {
-		v.scrollBg.Show()
+		showObject(v.scrollBg)
 		v.scrollBg.Resize(fyne.NewSize(scrollbarW, visibleH))
 		v.scrollBg.Move(fyne.NewPos(size.Width-scrollbarW, header))
 		v.scrollBg.FillColor = colView
-		v.scroll.Show()
+		showObject(v.scroll)
 		content := v.maxOffset() + visibleH
 		thumbH := visibleH * visibleH / content
 		if thumbH < 24 {
@@ -931,7 +1043,7 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 func (r *fileViewRenderer) layoutHeader(size fyne.Size) {
 	v := r.v
 	for _, o := range []fyne.CanvasObject{v.hdrBg, v.hdrTop, v.hdrDiv1, v.hdrDiv2, v.hdrName, v.hdrSize, v.hdrDate, v.sortIcon, v.colHandle1, v.colHandle2} {
-		o.Show()
+		showObject(o)
 	}
 	headerW := size.Width - scrollbarW
 	ne := v.nameEnd(size.Width)
@@ -960,16 +1072,16 @@ func (r *fileViewRenderer) layoutHeader(size fyne.Size) {
 }
 
 func (r *fileViewRenderer) hideHeader() {
-	r.v.hdrBg.Hide()
-	r.v.hdrTop.Hide()
-	r.v.hdrDiv1.Hide()
-	r.v.hdrDiv2.Hide()
-	r.v.hdrName.Hide()
-	r.v.hdrSize.Hide()
-	r.v.hdrDate.Hide()
-	r.v.sortIcon.Hide()
-	r.v.colHandle1.Hide()
-	r.v.colHandle2.Hide()
+	hideObject(r.v.hdrBg)
+	hideObject(r.v.hdrTop)
+	hideObject(r.v.hdrDiv1)
+	hideObject(r.v.hdrDiv2)
+	hideObject(r.v.hdrName)
+	hideObject(r.v.hdrSize)
+	hideObject(r.v.hdrDate)
+	hideObject(r.v.sortIcon)
+	hideObject(r.v.colHandle1)
+	hideObject(r.v.colHandle2)
 }
 
 func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, y float32, size fyne.Size, visibleH, header float32) {
@@ -986,13 +1098,13 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 	if idx == v.hover && idx != v.selected {
 		rowBgColor = colHover
 	}
-	row.bg.FillColor = rowBgColor
-	row.bg.Show()
+	setFill(row.bg, rowBgColor)
+	showObject(row.bg)
 	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, rh))
 	row.bg.Move(fyne.NewPos(0, y))
-	row.sel.Hide()
+	hideObject(row.sel)
 	if idx == v.selected {
-		row.sel.Show()
+		showObject(row.sel)
 		row.sel.Move(fyne.NewPos(1, y+2))
 		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, rh-4))
 		if v.focused {
@@ -1005,32 +1117,29 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 		}
 		row.sel.Refresh()
 	}
-	row.exp.Hide()
+	hideObject(row.exp)
 	iconSize := clamp(v.detailIconSize, 16, 48)
-	row.icon.Show()
-	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
+	showObject(row.icon)
+	setRowIcon(row, fileIconName(e.name, e.isDir))
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(8, y+(rh-iconSize)/2))
-	row.name.Show()
+	showObject(row.name)
 	nameX := 8 + iconSize + 6
 	nameW := size.Width - scrollbarW - 140 - nameX - 8
 	if nameW < 10 {
 		nameW = 10
 	}
 	row.name.Text = v.elidedName(idx, nameW, 1)
-	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignLeading
+	row.name.Color = colText
 	row.name.Move(fyne.NewPos(nameX, y+(rh-26)/2-2))
 	row.name.Resize(fyne.NewSize(nameW, 24))
-	row.name.Refresh()
-	row.size.Show()
-	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
-	row.size.Alignment = fyne.TextAlignTrailing
+	showObject(row.size)
+	setRowText(row.size, formatSize(e.size, e.isDir, e.itemCount), fyne.TextAlignTrailing)
 	row.size.Color = colText
 	row.size.Move(fyne.NewPos(size.Width-scrollbarW-140, y+(rh-26)/2-2))
 	row.size.Resize(fyne.NewSize(130, 24))
-	row.size.Refresh()
-	row.date.Hide()
+	hideObject(row.date)
 }
 
 func (r *fileViewRenderer) layoutIconRow(row *fileRow, idx int, e fileEntry, x, y, cellW, cellH, visibleH, header float32) {
@@ -1039,47 +1148,54 @@ func (r *fileViewRenderer) layoutIconRow(row *fileRow, idx int, e fileEntry, x, 
 	if iconSize < 16 {
 		iconSize = 64
 	}
-	row.bg.FillColor = colView
-	row.bg.Show()
+	setFill(row.bg, colView)
+	showObject(row.bg)
 	row.bg.Resize(fyne.NewSize(cellW, cellH))
 	row.bg.Move(fyne.NewPos(x, y))
 
-	row.sel.Show()
-	row.sel.Move(fyne.NewPos(x+4, y+2))
-	row.sel.Resize(fyne.NewSize(cellW-8, cellH-4))
 	switch {
 	case idx == v.selected && v.focused:
+		showObject(row.sel)
 		row.sel.FillColor = colAccent
 		row.sel.StrokeColor = colAccent
 		row.sel.StrokeWidth = 0
+		row.sel.Move(fyne.NewPos(x+4, y+2))
+		row.sel.Resize(fyne.NewSize(cellW-8, cellH-4))
+		row.sel.Refresh()
 	case idx == v.selected:
+		showObject(row.sel)
 		row.sel.FillColor = colSelection
 		row.sel.StrokeColor = colSelectionEdge
 		row.sel.StrokeWidth = 1
+		row.sel.Move(fyne.NewPos(x+4, y+2))
+		row.sel.Resize(fyne.NewSize(cellW-8, cellH-4))
+		row.sel.Refresh()
 	case idx == v.hover:
+		showObject(row.sel)
 		row.sel.FillColor = colHover
 		row.sel.StrokeColor = colTransparent
 		row.sel.StrokeWidth = 0
+		row.sel.Move(fyne.NewPos(x+4, y+2))
+		row.sel.Resize(fyne.NewSize(cellW-8, cellH-4))
+		row.sel.Refresh()
 	default:
-		row.sel.Hide()
+		hideObject(row.sel)
 	}
-	row.sel.Refresh()
 
-	row.exp.Hide()
-	row.icon.Show()
-	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
+	hideObject(row.exp)
+	showObject(row.icon)
+	setRowIcon(row, fileIconName(e.name, e.isDir))
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(x+(cellW-iconSize)/2, y+10))
 
-	row.name.Show()
+	showObject(row.name)
 	row.name.Text = v.elidedName(idx, cellW-8, 2)
-	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignCenter
+	row.name.Color = colText
 	row.name.Move(fyne.NewPos(x+4, y+iconSize+14))
 	row.name.Resize(fyne.NewSize(cellW-8, 24))
-	row.name.Refresh()
-	row.size.Hide()
-	row.date.Hide()
+	hideObject(row.size)
+	hideObject(row.date)
 }
 
 func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float32, size fyne.Size, visibleH float32) {
@@ -1096,14 +1212,14 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	if idx == v.hover && idx != v.selected {
 		rowBgColor = colHover
 	}
-	row.bg.FillColor = rowBgColor
-	row.bg.Show()
+	setFill(row.bg, rowBgColor)
+	showObject(row.bg)
 	row.bg.Resize(fyne.NewSize(size.Width-scrollbarW, rh))
 	row.bg.Move(fyne.NewPos(0, y))
 
-	row.sel.Hide()
+	hideObject(row.sel)
 	if idx == v.selected {
-		row.sel.Show()
+		showObject(row.sel)
 		row.sel.Move(fyne.NewPos(1, y+2))
 		row.sel.Resize(fyne.NewSize(size.Width-scrollbarW-2, rh-4))
 		if v.focused {
@@ -1119,62 +1235,58 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	}
 
 	indent := float32(e.depth * 16)
-	row.exp.Hide()
+	hideObject(row.exp)
 	row.exp.Move(fyne.NewPos(4+indent, y+(rh-14)/2))
 	row.exp.Resize(fyne.NewSize(14, 14))
 	if e.isDir {
 		if v.expanded[e.path] {
-			setIconResource(row.exp, "go-down", colTextMuted)
+			setRowExpandedIcon(row, "go-down")
 		} else {
-			setIconResource(row.exp, "go-next", colTextMuted)
+			setRowExpandedIcon(row, "go-next")
 		}
-		row.exp.Show()
+		showObject(row.exp)
 	}
 
 	iconSize := clamp(v.detailIconSize, 16, 64)
-	row.icon.Show()
-	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
+	showObject(row.icon)
+	setRowIcon(row, fileIconName(e.name, e.isDir))
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(23+indent, y+(rh-iconSize)/2-1))
 
-	row.name.Show()
-	row.size.Show()
-	row.date.Show()
-	row.name.Alignment = fyne.TextAlignLeading
+	showObject(row.name)
+	showObject(row.size)
+	showObject(row.date)
 	nameX := 23 + indent + iconSize + 5
 	nameW := v.nameEnd(size.Width) - nameX - 16
 	if nameW < 10 {
 		nameW = 10
 	}
 	row.name.Text = v.elidedName(idx, nameW, 0)
+	row.name.Alignment = fyne.TextAlignLeading
 	row.name.Color = colText
 	textY := y + (rh-rowH)/2 + 1
 	row.name.Move(fyne.NewPos(nameX, textY))
 	row.name.Resize(fyne.NewSize(nameW, 24))
-	row.name.Refresh()
 
-	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
+	setRowText(row.size, formatSize(e.size, e.isDir, e.itemCount), fyne.TextAlignTrailing)
 	row.size.Move(fyne.NewPos(v.nameEnd(size.Width), textY))
 	row.size.Resize(fyne.NewSize(v.szW()-4, 24))
-	row.size.Alignment = fyne.TextAlignTrailing
 	row.size.Color = colText
-	row.size.Refresh()
 
-	row.date.Text = formatDate(e.modTime)
+	setRowText(row.date, formatDate(e.modTime), fyne.TextAlignLeading)
 	row.date.Move(fyne.NewPos(v.nameEnd(size.Width)+v.szW()+5, textY))
 	row.date.Resize(fyne.NewSize(size.Width-v.nameEnd(size.Width)-v.szW()-scrollbarW-18, 24))
 	row.date.Color = colText
-	row.date.Refresh()
 }
 
 func (r *fileViewRenderer) hideRow(row *fileRow) {
-	row.bg.Hide()
-	row.sel.Hide()
-	row.exp.Hide()
-	row.icon.Hide()
-	row.name.Hide()
-	row.size.Hide()
-	row.date.Hide()
+	hideObject(row.bg)
+	hideObject(row.sel)
+	hideObject(row.exp)
+	hideObject(row.icon)
+	hideObject(row.name)
+	hideObject(row.size)
+	hideObject(row.date)
 }
 
 const (
@@ -1193,11 +1305,7 @@ func (r *fileViewRenderer) Refresh() {
 			setIconResource(r.v.sortIcon, "arrow-down", colTextMuted)
 		}
 	}
-	if r.v.focused {
-		r.v.scroll.FillColor = colScroll
-	} else {
-		r.v.scroll.FillColor = colScroll
-	}
+	setFill(r.v.scroll, colScroll)
 	r.Layout(r.v.Size())
 	canvas.Refresh(r.v)
 }
@@ -1225,39 +1333,76 @@ func readEntries(dir string, countChildren bool) ([]fileEntry, error) {
 				target = st
 			}
 		}
-		e := fileEntry{
+		out = append(out, fileEntry{
 			name:    de.Name(),
 			path:    filepath.Join(dir, de.Name()),
 			isDir:   target.IsDir(),
-			isLink:  isLink,
 			size:    target.Size(),
 			modTime: target.ModTime(),
-		}
-		if e.isDir && countChildren {
-			if children, err := os.ReadDir(e.path); err == nil {
-				e.itemCount = len(children)
-				if e.itemCount == 0 {
-					e.itemCount = 0
-				}
-			}
-		}
-		out = append(out, e)
+		})
+	}
+	if countChildren {
+		countDirectoryEntries(out)
 	}
 	return out, nil
+}
+
+// countDirectoryEntries fills in the KIO-style "N items" counts. Reading every
+// subdirectory is I/O bound, so use a small worker pool instead of walking the
+// list serially on the UI goroutine.
+func countDirectoryEntries(entries []fileEntry) {
+	dirs := make([]int, 0, len(entries))
+	for i := range entries {
+		if entries[i].isDir {
+			dirs = append(dirs, i)
+		}
+	}
+	if len(dirs) == 0 {
+		return
+	}
+	if len(dirs) < 4 {
+		for _, i := range dirs {
+			if children, err := os.ReadDir(entries[i].path); err == nil {
+				entries[i].itemCount = len(children)
+			}
+		}
+		return
+	}
+	workers := len(dirs)
+	if workers > 8 {
+		workers = 8
+	}
+	jobs := make(chan int)
+	var wg sync.WaitGroup
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func() {
+			defer wg.Done()
+			for index := range jobs {
+				if children, err := os.ReadDir(entries[index].path); err == nil {
+					entries[index].itemCount = len(children)
+				}
+			}
+		}()
+	}
+	for _, index := range dirs {
+		jobs <- index
+	}
+	close(jobs)
+	wg.Wait()
 }
 
 func entryMatches(e fileEntry, patterns []string) bool {
 	if e.isDir || len(patterns) == 0 {
 		return true
 	}
-	for _, group := range patterns {
-		for _, pat := range strings.FieldsFunc(group, func(r rune) bool { return r == ';' || r == ' ' }) {
-			if pat == "*" || pat == "*.*" {
-				return true
-			}
-			if ok, _ := filepath.Match(strings.ToLower(pat), strings.ToLower(e.name)); ok {
-				return true
-			}
+	name := strings.ToLower(e.name)
+	for _, pattern := range patterns {
+		if pattern == "*" || pattern == "*.*" {
+			return true
+		}
+		if ok, _ := filepath.Match(pattern, name); ok {
+			return true
 		}
 	}
 	return false

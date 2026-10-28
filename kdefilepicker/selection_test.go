@@ -233,19 +233,24 @@ func TestPreviewImageIsAsync(t *testing.T) {
 	defer w.Close()
 	w.Resize(fyne.NewSize(1400, 869))
 
+	loaded := make(chan struct{})
+	d.preview.onImageLoaded = func() { close(loaded) }
+
 	d.ShowPreview(true)
 	if !d.SelectFile("beta.png") {
 		t.Fatal("beta.png not selectable")
 	}
 
 	// SetFile returns with the icon placeholder visible; the decoded image
-	// appears once the background load lands.
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if d.preview.img.Visible() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
+	// appears once the background load lands. The hook gives the test a
+	// happens-before edge to the pane's fields (polling them would race under
+	// the test driver, which runs fyne.Do inline on the loader goroutine).
+	select {
+	case <-loaded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("preview image never arrived")
 	}
-	t.Fatal("preview image never arrived")
+	if !d.preview.img.Visible() {
+		t.Fatal("preview image should be visible after loading")
+	}
 }

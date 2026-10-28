@@ -185,7 +185,6 @@ const (
 	textSize     float32 = 20
 	sidebarWidth float32 = 199
 	toolbarH     float32 = 46
-	breadcrumbH  float32 = 44
 	headerH      float32 = 37
 	rowH         float32 = 31
 	bottomH      float32 = 142
@@ -255,6 +254,11 @@ func (t *Theme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color
 
 // Font implements fyne.Theme.
 func (t *Theme) Font(style fyne.TextStyle) fyne.Resource {
+	// Noto Sans has no monospace or symbol faces; let those styles fall back
+	// to the platform theme instead of silently using a proportional font.
+	if style.Monospace || style.Symbol {
+		return theme.DefaultTheme().Font(style)
+	}
 	loadFonts()
 	switch {
 	case style.Bold && style.Italic:

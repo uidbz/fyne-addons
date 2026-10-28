@@ -5,11 +5,13 @@
 package kdefilepicker
 
 import (
+	"context"
 	"encoding/json"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 type lsblkOutput struct {
@@ -27,7 +29,9 @@ type lsblkDevice struct {
 }
 
 func loadDevices() []place {
-	out, err := exec.Command("lsblk", "-J", "-o", "NAME,LABEL,MOUNTPOINT,FSTYPE,SIZE,FSUSE%").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "lsblk", "-J", "-o", "NAME,LABEL,MOUNTPOINT,FSTYPE,SIZE,FSUSE%").Output()
 	if err != nil {
 		return nil
 	}
@@ -60,13 +64,12 @@ func loadDevices() []place {
 				}
 			}
 			places = append(places, place{
-				name:    name,
-				path:    d.Mountpoint,
-				icon:    "drive-harddisk",
-				device:  true,
-				used:    used,
-				size:    size,
-				mounted: mounted,
+				name:   name,
+				path:   d.Mountpoint,
+				icon:   "drive-harddisk",
+				device: true,
+				used:   used,
+				size:   size,
 			})
 		}
 	}
@@ -75,7 +78,13 @@ func loadDevices() []place {
 }
 
 func parseHumanSize(s string) uint64 {
-	s = strings.TrimSpace(s)
+	s = strings.ToUpper(strings.TrimSpace(s))
+	if s == "" {
+		return 0
+	}
+	// lsblk emits either "512B", "1.5G" or occasionally "1.5GiB".
+	s = strings.TrimSuffix(s, "IB")
+	s = strings.TrimSuffix(s, "B")
 	if s == "" {
 		return 0
 	}
@@ -96,7 +105,10 @@ func parseHumanSize(s string) uint64 {
 		s = s[:len(s)-1]
 	}
 	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	if err != nil || f <= 0 {
+		return 0
+	}
+	if f >= float64(^uint64(0))/float64(mult) {
 		return 0
 	}
 	return uint64(f * float64(mult))

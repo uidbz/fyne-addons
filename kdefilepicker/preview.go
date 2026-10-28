@@ -24,6 +24,11 @@ type previewPane struct {
 	entry   fileEntry
 	loadSeq int // guards against stale async image loads
 
+	// onImageLoaded is a test seam: it fires after a background image load has
+	// published its canvas object, giving tests a happens-before edge instead
+	// of polling the pane from another goroutine.
+	onImageLoaded func()
+
 	bg       *canvas.Rectangle
 	headerBg *canvas.Rectangle
 	line     *canvas.Rectangle
@@ -101,15 +106,15 @@ func (p *previewPane) SetFile(path string, e fileEntry) {
 	p.size.Text = formatSize(e.size, e.isDir, e.itemCount)
 	p.date.Text = formatDate(e.modTime)
 
+	p.img.Hide()
+	p.icon.Hide()
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif":
 		// Show the file icon immediately and decode the image in the
 		// background; synchronous decode of large photos made selecting
 		// such a file take hundreds of milliseconds.
-		p.img.Hide()
-		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
-		p.icon.Show()
+		p.showIcon(e)
 		go func() {
 			f, err := os.Open(path)
 			if err != nil {
@@ -129,13 +134,14 @@ func (p *previewPane) SetFile(path string, e fileEntry) {
 				p.img = ni
 				p.img.Show()
 				p.icon.Hide()
+				if p.onImageLoaded != nil {
+					p.onImageLoaded()
+				}
 				canvas.Refresh(p)
 			})
 		}()
 	case ".svg":
-		p.img.Hide()
-		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
-		p.icon.Show()
+		p.showIcon(e)
 		go func() {
 			data, err := os.ReadFile(path)
 			if err != nil {
@@ -149,15 +155,24 @@ func (p *previewPane) SetFile(path string, e fileEntry) {
 				p.img = canvas.NewImageFromResource(fyne.NewStaticResource(filepath.Base(path), data))
 				p.img.FillMode = canvas.ImageFillContain
 				p.img.Show()
+				if p.onImageLoaded != nil {
+					p.onImageLoaded()
+				}
 				canvas.Refresh(p)
 			})
 		}()
 	default:
-		p.img.Hide()
-		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
-		p.icon.Show()
+		p.showIcon(e)
 	}
 	canvas.Refresh(p)
+}
+
+// showIcon ends the preview in the deterministic icon fallback state.
+func (p *previewPane) showIcon(e fileEntry) {
+	p.img.Hide()
+	p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
+	p.icon.Refresh()
+	p.icon.Show()
 }
 
 type previewRenderer struct {

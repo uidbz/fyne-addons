@@ -154,6 +154,8 @@ func placeColor(icon string) color.Color {
 		return color.NRGBA{R: 0x27, G: 0xae, B: 0x60, A: 0xff}
 	case "folder-yellow":
 		return color.NRGBA{R: 0xfd, G: 0xbc, B: 0x4b, A: 0xff}
+	case "folder-grey":
+		return colTextMuted
 	}
 	return colText
 }

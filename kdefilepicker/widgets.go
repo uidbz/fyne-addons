@@ -416,11 +416,9 @@ type lineEdit struct {
 	placeholder string
 	focused     bool
 	hovered     bool
-	clearable   bool
 
 	onChanged   func(string)
 	onSubmitted func(string)
-	onTapped    func()
 	onEscape    func()
 
 	bg    *canvas.Rectangle
@@ -500,9 +498,6 @@ func (e *lineEdit) Tapped(pe *fyne.PointEvent) {
 		c.Focus(e)
 	}
 	e.setCursorFromX(pe.Position.X, false)
-	if e.onTapped != nil {
-		e.onTapped()
-	}
 }
 
 func (e *lineEdit) DoubleTapped(*fyne.PointEvent) { e.selectAll() }
@@ -736,7 +731,8 @@ func (e *lineEdit) TypedShortcut(s fyne.Shortcut) {
 		}
 		e.notifyChanged()
 	case *fyne.ShortcutPaste:
-		text := strings.ReplaceAll(clip.Content(), "\n", "")
+		text := strings.ReplaceAll(clip.Content(), "\r", "")
+		text = strings.ReplaceAll(text, "\n", "")
 		e.deleteSelection()
 		e.text = append(e.text[:e.cursor], append([]rune(text), e.text[e.cursor:]...)...)
 		e.cursor += len([]rune(text))
@@ -913,6 +909,7 @@ type comboBox struct {
 	value   string
 	hovered bool
 	tap     func(*fyne.PointEvent)
+	onClear func()
 
 	bg    *canvas.Rectangle
 	txt   *canvas.Text
@@ -940,6 +937,13 @@ func (c *comboBox) MinSize() fyne.Size { return fyne.NewSize(200, 37) }
 func (c *comboBox) SetValue(v string) { c.value = v; c.Refresh() }
 
 func (c *comboBox) Tapped(e *fyne.PointEvent) {
+	// The clear icon sits between the text and the dropdown arrow.
+	if c.clear != nil && c.clear.Visible() && e.Position.X >= c.Size().Width-49 && e.Position.X <= c.Size().Width-29 {
+		if c.onClear != nil {
+			c.onClear()
+		}
+		return
+	}
 	if c.tap != nil {
 		c.tap(e)
 	}

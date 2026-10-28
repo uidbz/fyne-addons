@@ -17,13 +17,12 @@ import (
 )
 
 type place struct {
-	name    string
-	path    string
-	icon    string
-	device  bool
-	used    uint64
-	size    uint64
-	mounted bool
+	name   string
+	path   string
+	icon   string
+	device bool
+	used   uint64
+	size   uint64
 }
 
 type placeGroup struct {
@@ -59,6 +58,7 @@ func (m *placesModel) reload() {
 	if len(groups) == 0 {
 		groups = append(groups, placeGroup{title: "Places", places: defaultPlaces()})
 	}
+	m.flat = nil
 	for _, g := range groups {
 		m.flat = append(m.flat, g.places...)
 	}
@@ -82,10 +82,11 @@ type xbelRoot struct {
 }
 
 type xbelItem struct {
-	XMLName xml.Name
-	Href    string   `xml:"href,attr"`
-	Title   string   `xml:"title"`
-	Info    xbelInfo `xml:"info"`
+	XMLName  xml.Name
+	Href     string     `xml:"href,attr"`
+	Title    string     `xml:"title"`
+	Info     xbelInfo   `xml:"info"`
+	Children []xbelItem `xml:",any"`
 }
 
 type xbelInfo struct {
@@ -112,37 +113,31 @@ func loadBookmarks() []place {
 	if err != nil {
 		return nil
 	}
-	// The on-disk XBEL produced by KDE uses the bookmark: prefix without
-	// declaring it. Add the declaration so encoding/xml can parse it.
-	text := strings.Replace(string(data), "<xbel>", `<xbel xmlns:bookmark="http://freedesktop.org">`, 1)
 	var root xbelRoot
-	if err := xml.Unmarshal([]byte(text), &root); err != nil {
+	// encoding/xml matches unprefixed struct tags across namespaces, so KDE's
+	// undeclared bookmark: prefix does not need any rewriting here.
+	if err := xml.Unmarshal(data, &root); err != nil {
 		return nil
 	}
 
 	seen := map[string]bool{}
 	var out []place
 	haveHome := false
-	for _, item := range root.Items {
-		if item.XMLName.Local != "bookmark" {
-			continue
-		}
+
+	addBookmark := func(item xbelItem) {
 		if item.Href == "" || item.Title == "" || hiddenXBEL(item) {
-			continue
+			return
 		}
 		u, err := url.Parse(item.Href)
 		if err != nil || u.Scheme != "file" {
-			continue
+			return
 		}
 		p := u.Path
 		if u.Host != "" && u.Host != "localhost" {
-			continue
+			return
 		}
-		if p == "" {
-			continue
-		}
-		if seen[p] {
-			continue
+		if p == "" || seen[p] {
+			return
 		}
 		icon := "folder"
 		for _, md := range item.Info.Metadata {
@@ -155,24 +150,28 @@ func loadBookmarks() []place {
 		if filepath.Clean(p) == filepath.Clean(home) {
 			haveHome = true
 			out = append(out, place{name: "Home", path: p, icon: icon})
-			continue
+			return
 		}
 		out = append(out, place{name: item.Title, path: p, icon: icon})
 	}
-	if !haveHome && home != "" {
-		// Insert Home in the same place KFilePlacesModel does when the
-		// XBEL has no explicit entry: after user bookmarks.
-		pos := 0
-		for i, p := range out {
-			if p.name == "Home" {
-				pos = i
-				break
+
+	var walk func(items []xbelItem)
+	walk = func(items []xbelItem) {
+		for _, item := range items {
+			switch item.XMLName.Local {
+			case "bookmark":
+				addBookmark(item)
+			case "folder":
+				walk(item.Children)
 			}
-			pos = i + 1
 		}
-		out = append(out, place{})
-		copy(out[pos+1:], out[pos:])
-		out[pos] = place{name: "Home", path: home, icon: "folder"}
+	}
+	walk(root.Items)
+
+	if !haveHome && home != "" {
+		// KFilePlacesModel adds Home after the user bookmarks when the XBEL
+		// has no explicit entry for it.
+		out = append(out, place{name: "Home", path: home, icon: "folder"})
 	}
 	return out
 }
@@ -210,13 +209,12 @@ type placesView struct {
 }
 
 type placeRow struct {
-	sel    *canvas.Rectangle
-	icon   *canvas.Image
-	text   *canvas.Text
-	barBg  *canvas.Rectangle
-	barFg  *canvas.Rectangle
-	path   string
-	height float32
+	sel       *canvas.Rectangle
+	icon      *canvas.Image
+	text      *canvas.Text
+	barBg     *canvas.Rectangle
+	barFg     *canvas.Rectangle
+	textValue string
 }
 
 func newPlacesView(model *placesModel) *placesView {
@@ -265,21 +263,18 @@ func (v *placesView) SetCurrent(path string) {
 	v.current = filepath.Clean(path)
 	v.selectedIdx = -1
 	best := -1
-	flat := v.flat()
-	for i, p := range flat {
-		if p.path == "" || p.device {
-			if filepath.Clean(p.path) == v.current {
-				v.selectedIdx = i
-				break
-			}
+	for i, p := range v.model.flat {
+		if p.path == "" {
 			continue
 		}
 		pp := filepath.Clean(p.path)
-		if v.current == pp || strings.HasPrefix(v.current, pp+string(filepath.Separator)) {
-			if len(pp) > best {
-				best = len(pp)
-				v.selectedIdx = i
-			}
+		match := v.current == pp
+		if !p.device {
+			match = match || strings.HasPrefix(v.current, pp+string(filepath.Separator))
+		}
+		if match && len(pp) > best {
+			best = len(pp)
+			v.selectedIdx = i
 		}
 	}
 	v.Refresh()
@@ -290,19 +285,11 @@ func (v *placesView) Tapped(e *fyne.PointEvent) {
 		c.Focus(v)
 	}
 	idx := v.indexAt(e.Position.Y)
-	if idx >= 0 {
+	if idx >= 0 && idx < len(v.model.flat) {
 		if v.onOpen != nil {
-			v.onOpen(v.flat()[idx].path)
+			v.onOpen(v.model.flat[idx].path)
 		}
 	}
-}
-
-func (v *placesView) flat() []place {
-	var out []place
-	for _, g := range v.model.groups {
-		out = append(out, g.places...)
-	}
-	return out
 }
 
 func (v *placesView) indexAt(y float32) int {
@@ -393,8 +380,6 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 
 		for _, p := range g.places {
 			row := r.v.rows[idx]
-			row.path = p.path
-			row.height = 24
 			visible := pos+24 > 0 && pos < size.Height
 			if !visible {
 				r.hideRow(row)
@@ -406,7 +391,12 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 			setIconResource(row.icon, p.icon, placeColor(p.icon))
 			row.icon.Resize(fyne.NewSize(16, 16))
 			row.icon.Move(fyne.NewPos(4, pos+4))
-			row.text.Text = elide(p.name, 158, textSize)
+			text := elide(p.name, 158, textSize)
+			if row.textValue != text {
+				row.textValue = text
+				row.text.Text = text
+				row.text.Refresh()
+			}
 			row.text.Move(fyne.NewPos(24, pos-2))
 			row.text.Resize(fyne.NewSize(165, 24))
 			row.sel.Resize(fyne.NewSize(191, 22))
@@ -414,38 +404,38 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 			hovered := idx == r.v.hover
 			if selected {
 				if r.v.focused {
-					row.sel.FillColor = colAccent
+					setFill(row.sel, colAccent)
 				} else {
-					row.sel.FillColor = colPlaceSelection
+					setFill(row.sel, colPlaceSelection)
 				}
-				row.sel.Show()
+				showObject(row.sel)
 			} else if hovered {
-				row.sel.FillColor = colHover
-				row.sel.Show()
+				setFill(row.sel, colHover)
+				showObject(row.sel)
 			} else {
-				row.sel.Hide()
+				hideObject(row.sel)
 			}
 			row.sel.Move(fyne.NewPos(4, pos+1))
 			row.sel.Resize(fyne.NewSize(191, 22))
 
-			textW := fyne.MeasureText(row.text.Text, textSize, fyne.TextStyle{}).Width
 			if p.device && p.size > 0 {
+				textW := fyne.MeasureText(row.text.Text, textSize, fyne.TextStyle{}).Width
 				barY := pos + 18
-				row.barBg.Show()
+				showObject(row.barBg)
 				row.barBg.Move(fyne.NewPos(25, barY))
 				row.barBg.Resize(fyne.NewSize(textW, 2))
-				row.barFg.Show()
+				showObject(row.barFg)
 				frac := float32(p.used) / float32(p.size)
 				row.barFg.Move(fyne.NewPos(25, barY))
 				row.barFg.Resize(fyne.NewSize(textW*clamp(frac, 0, 1), 2))
 				if selected {
-					row.barFg.FillColor = colText
+					setFill(row.barFg, colText)
 				} else {
-					row.barFg.FillColor = colAccent
+					setFill(row.barFg, colAccent)
 				}
 			} else {
-				row.barBg.Hide()
-				row.barFg.Hide()
+				hideObject(row.barBg)
+				hideObject(row.barFg)
 			}
 			pos += 24
 			idx++
@@ -465,19 +455,18 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 }
 
 func (r *placesRenderer) hideRow(row *placeRow) {
-	row.sel.Hide()
-	row.icon.Hide()
-	row.text.Hide()
-	row.barBg.Hide()
-	row.barFg.Hide()
+	hideObject(row.sel)
+	hideObject(row.icon)
+	hideObject(row.text)
+	hideObject(row.barBg)
+	hideObject(row.barFg)
 }
 
 func (row *placeRow) show() {
-	row.sel.Show()
-	row.icon.Show()
-	row.text.Show()
-	row.barBg.Hide()
-	row.barFg.Hide()
+	showObject(row.icon)
+	showObject(row.text)
+	hideObject(row.barBg)
+	hideObject(row.barFg)
 }
 
 func (r *placesRenderer) MinSize() fyne.Size { return fyne.NewSize(sidebarWidth, 400) }
@@ -494,20 +483,23 @@ func elide(s string, max float32, size float32) string {
 	if fyne.MeasureText(s, size, fyne.TextStyle{}).Width <= max {
 		return s
 	}
-	r := []rune(s)
-	// Binary search the longest prefix that fits with an ellipsis; the old
-	// one-rune-at-a-time loop measured the string up to len(s) times per
-	// label, which made list refreshes expensive on long names.
-	lo, hi := 1, len(r)-1
+	runes := []rune(s)
+	// Prefix widths are monotonic, so binary search the longest prefix that
+	// still fits with the ellipsis.
+	lo, hi := 0, len(runes)
 	for lo < hi {
 		mid := (lo + hi + 1) / 2
-		if fyne.MeasureText(string(r[:mid])+"…", size, fyne.TextStyle{}).Width <= max {
+		candidate := string(runes[:mid]) + "…"
+		if fyne.MeasureText(candidate, size, fyne.TextStyle{}).Width <= max {
 			lo = mid
 		} else {
 			hi = mid - 1
 		}
 	}
-	return string(r[:lo]) + "…"
+	if lo == 0 {
+		return "…"
+	}
+	return string(runes[:lo]) + "…"
 }
 
 func colorWithAlpha(c color.NRGBA, a uint8) color.NRGBA {

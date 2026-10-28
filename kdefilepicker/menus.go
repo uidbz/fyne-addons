@@ -111,21 +111,32 @@ func (d *Dialog) showOptionsMenu() {
 }
 
 func (d *Dialog) newFolder() {
-	base := "New Folder"
-	name := base
-	for i := 1; ; i++ {
-		if _, err := os.Stat(filepath.Join(d.currentDir, name)); os.IsNotExist(err) {
+	const base = "New Folder"
+	path := ""
+	for i := 0; i < 1000; i++ {
+		name := base
+		if i > 0 {
+			name = base + " " + strconv.Itoa(i)
+		}
+		candidate := filepath.Join(d.currentDir, name)
+		err := os.Mkdir(candidate, 0o755)
+		if err == nil {
+			path = candidate
 			break
 		}
-		name = base + " " + strconv.Itoa(i)
+		if !os.IsExist(err) {
+			d.showError(err.Error())
+			return
+		}
 	}
-	path := filepath.Join(d.currentDir, name)
-	if err := os.Mkdir(path, 0o755); err != nil {
-		d.showError(err.Error())
+	if path == "" {
+		d.showError("Could not create a new folder.")
 		return
 	}
+	name := filepath.Base(path)
 	d.loadDir(d.currentDir)
 	d.files.selectName(name)
 	d.bottom.name.SetText(name)
+	d.bottom.name.cursor = len([]rune(name))
 	d.updateOpenState()
 }

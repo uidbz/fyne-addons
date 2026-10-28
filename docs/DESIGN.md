@@ -110,8 +110,14 @@ Toolbar icons are 22 px; row/place/device icons are 16 px.
   and dragging anywhere along its groove, and scales the icon grid as well as
   the row icon/height in details and compact views. None of the custom widgets
   install a special mouse cursor.
-* Selecting a row fills the name field and updates the preview dock.
+* Selecting a row fills the name field and updates the preview dock. Filter,
+  hidden-file and sort changes preserve the selection by path and clear it only
+  when the selected entry is no longer listed.
+* Deep breadcrumb paths collapse leading segments into a clickable ellipsis so
+  they never draw outside the navigator; the path dropdown still lists every
+  segment.
 * History is a simple index into a path list; back/forward start disabled.
+* Refresh (`F5`) preserves the typed name, selection and scroll position.
 * The places model preserves XBEL order, skips hidden entries and unsupported
   URL schemes, and highlights the deepest matching place.
 * Devices are read from `lsblk`; mounted filesystems get capacity bars from
