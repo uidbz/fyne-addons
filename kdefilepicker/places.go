@@ -496,14 +496,19 @@ func elide(s string, max float32, size float32) string {
 		return s
 	}
 	r := []rune(s)
-	for len(r) > 1 {
-		r = r[:len(r)-1]
-		cand := string(r) + "…"
-		if fyne.MeasureText(cand, size, fyne.TextStyle{}).Width <= max {
-			return cand
+	// Binary search the longest prefix that fits with an ellipsis; the old
+	// one-rune-at-a-time loop measured the string up to len(s) times per
+	// label, which made list refreshes expensive on long names.
+	lo, hi := 1, len(r)-1
+	for lo < hi {
+		mid := (lo + hi + 1) / 2
+		if fyne.MeasureText(string(r[:mid])+"…", size, fyne.TextStyle{}).Width <= max {
+			lo = mid
+		} else {
+			hi = mid - 1
 		}
 	}
-	return "…"
+	return string(r[:lo]) + "…"
 }
 
 func colorWithAlpha(c color.NRGBA, a uint8) color.NRGBA {

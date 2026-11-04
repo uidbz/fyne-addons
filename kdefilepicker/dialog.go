@@ -149,6 +149,7 @@ func newDialog(mode Mode, startDir, fileName string) *Dialog {
 	d.nav = newBreadcrumb()
 	d.nav.onNavigate = func(path string) { d.openDir(path) }
 	d.nav.onDropdown = func() { d.showPathMenu() }
+	d.nav.onEdit = func() { d.beginPathEdit() }
 	d.files = newFileView(startDir)
 	d.files.onOpenDir = func(path string) { d.openDir(path) }
 	d.files.onSelect = func(e fileEntry) {
@@ -645,9 +646,14 @@ func (d *Dialog) setQuickFilter(show bool) {
 }
 
 func (d *Dialog) beginPathEdit() {
+	if d.editing {
+		return
+	}
 	d.editing = true
 	d.pathEdit.SetText(d.currentDir)
-	d.pathEdit.cursor = len([]rune(d.currentDir))
+	// Like KDE: the whole path is selected, so typing replaces it or
+	// Shift+arrows / dragging refine the selection.
+	d.pathEdit.selectAll()
 	d.requestFocus(d.pathEdit)
 }
 

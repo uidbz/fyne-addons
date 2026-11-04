@@ -24,6 +24,12 @@ const (
 	sortByType
 )
 
+type elideCache struct {
+	mode byte    // view the width belongs to (details/compact/icons)
+	w    float32 // column width the elided text was computed for
+	out  string
+}
+
 type fileEntry struct {
 	name      string
 	path      string
@@ -33,6 +39,7 @@ type fileEntry struct {
 	modTime   time.Time
 	itemCount int
 	depth     int
+	el        elideCache // cached elide(name) keyed by view+width
 }
 
 type fileView struct {
@@ -47,6 +54,10 @@ type fileView struct {
 	focused      bool
 	showHidden   bool
 	sortField    sortField
+	sizeColW     float32 // user-set details column widths; 0 = automatic
+	dateColW     float32
+	colHandle1   *colHandle
+	colHandle2   *colHandle
 	ascending    bool
 	foldersFirst bool
 	filterText   string
@@ -118,6 +129,8 @@ func (v *fileView) CreateRenderer() fyne.WidgetRenderer {
 		t.TextSize = textSize
 	}
 	v.sortIcon = iconImage("go-up", colTextMuted, 12)
+	v.colHandle1 = newColHandle(v, 0)
+	v.colHandle2 = newColHandle(v, 1)
 	v.scrollBg = canvas.NewRectangle(colTransparent)
 	v.scroll = newRect(colScroll, colTransparent, 0, 3.5)
 	r := &fileViewRenderer{v: v}
@@ -126,6 +139,99 @@ func (v *fileView) CreateRenderer() fyne.WidgetRenderer {
 }
 
 func (v *fileView) MinSize() fyne.Size { return fyne.NewSize(500, 300) }
+
+// szW/dtW return the effective size/date column widths (user dragged them
+// via the header separators, otherwise the defaults apply). The name column
+// always absorbs the remainder.
+func (v *fileView) szW() float32 {
+	if v.sizeColW > 0 {
+		return v.sizeColW
+	}
+	return sizeColumnW
+}
+
+func (v *fileView) dtW() float32 {
+	if v.dateColW > 0 {
+		return v.dateColW
+	}
+	return dateColumnW
+}
+
+func (v *fileView) nameEnd(total float32) float32 {
+	ne := total - scrollbarW - v.szW() - v.dtW()
+	if ne < 120 {
+		ne = 120
+	}
+	return ne
+}
+
+// elidedName returns e.name shortened for width w, cached on the entry so
+// refreshes (selection, hover, scroll) do not re-measure text. The cache is
+// keyed by view mode and column width.
+func (v *fileView) elidedName(idx int, w float32, mode byte) string {
+	if idx < 0 || idx >= len(v.filtered) {
+		return ""
+	}
+	e := &v.filtered[idx]
+	if e.el.mode == mode && e.el.w == w && e.el.out != "" {
+		return e.el.out
+	}
+	e.el.mode, e.el.w = mode, w
+	e.el.out = elide(e.name, w, textSize)
+	return e.el.out
+}
+
+// colHandle is the thin drag target over a details-view column separator.
+// Dragging resizes the column to its right; double-click resets it.
+type colHandle struct {
+	widget.BaseWidget
+
+	view    *fileView
+	which   int // 0: name|size separator, 1: size|date separator
+	start   float32
+	startSz float32
+	startDt float32
+}
+
+func newColHandle(v *fileView, which int) *colHandle {
+	h := &colHandle{view: v, which: which}
+	h.ExtendBaseWidget(h)
+	return h
+}
+
+func (h *colHandle) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(newRect(colTransparent, colTransparent, 0, 0))
+}
+
+func (h *colHandle) MinSize() fyne.Size { return fyne.NewSize(9, headerH) }
+
+func (h *colHandle) DragStart(ev *fyne.DragEvent) {
+	h.start = ev.AbsolutePosition.X
+	h.startSz = h.view.szW()
+	h.startDt = h.view.dtW()
+}
+
+func (h *colHandle) Dragged(ev *fyne.DragEvent) {
+	dx := ev.AbsolutePosition.X - h.start
+	switch h.which {
+	case 0:
+		h.view.sizeColW = clamp(h.startSz-dx, 50, 600)
+	case 1:
+		h.view.dateColW = clamp(h.startDt-dx, 90, 600)
+	}
+	h.view.Refresh()
+}
+
+func (h *colHandle) DragEnd() {}
+
+func (h *colHandle) DoubleTapped(*fyne.PointEvent) {
+	if h.which == 0 {
+		h.view.sizeColW = 0
+	} else {
+		h.view.dateColW = 0
+	}
+	h.view.Refresh()
+}
 
 func (v *fileView) SetDir(dir string, entries []fileEntry) {
 	v.dir = dir
@@ -347,6 +453,26 @@ func (v *fileView) Tapped(e *fyne.PointEvent) {
 	}
 	if v.inScrollbar(e.Position.X, e.Position.Y) {
 		v.scrollToY(e.Position.Y)
+		return
+	}
+	// Tapping a details-view header sorts by that column; the drag handles
+	// sit on the separators and swallow events there instead.
+	if v.viewMode == 0 && e.Position.Y >= 0 && e.Position.Y <= headerH {
+		ne := v.nameEnd(v.Size().Width)
+		var field sortField
+		switch {
+		case e.Position.X < ne-4:
+			field = sortByName
+		case e.Position.X < ne+v.szW()-4:
+			field = sortBySize
+		default:
+			field = sortByDate
+		}
+		asc := true
+		if v.sortField == field {
+			asc = !v.ascending
+		}
+		v.SetSort(field, asc)
 		return
 	}
 	idx := v.entryAtPoint(e.Position.X, e.Position.Y)
@@ -783,6 +909,7 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 		r.objs = append(r.objs,
 			v.hdrBg, v.hdrTop, v.hdrDiv1, v.hdrDiv2,
 			v.hdrName, v.hdrSize, v.hdrDate, v.sortIcon,
+			v.colHandle1, v.colHandle2,
 		)
 	}
 	r.objs = append(r.objs, v.scrollBg, v.scroll)
@@ -790,27 +917,33 @@ func (r *fileViewRenderer) Layout(size fyne.Size) {
 
 func (r *fileViewRenderer) layoutHeader(size fyne.Size) {
 	v := r.v
-	for _, o := range []fyne.CanvasObject{v.hdrBg, v.hdrTop, v.hdrDiv1, v.hdrDiv2, v.hdrName, v.hdrSize, v.hdrDate, v.sortIcon} {
+	for _, o := range []fyne.CanvasObject{v.hdrBg, v.hdrTop, v.hdrDiv1, v.hdrDiv2, v.hdrName, v.hdrSize, v.hdrDate, v.sortIcon, v.colHandle1, v.colHandle2} {
 		o.Show()
 	}
 	headerW := size.Width - scrollbarW
+	ne := v.nameEnd(size.Width)
+	sz := v.szW()
 	v.hdrBg.Resize(fyne.NewSize(headerW, headerH))
 	v.hdrBg.Move(fyne.NewPos(0, 0))
 	v.hdrTop.Resize(fyne.NewSize(headerW, 1))
 	v.hdrTop.Move(fyne.NewPos(0, 0))
 	v.hdrDiv1.Resize(fyne.NewSize(1, headerH))
-	v.hdrDiv1.Move(fyne.NewPos(nameColumnW(size.Width), 0))
+	v.hdrDiv1.Move(fyne.NewPos(ne, 0))
 	v.hdrDiv2.Resize(fyne.NewSize(1, headerH))
-	v.hdrDiv2.Move(fyne.NewPos(nameColumnW(size.Width)+sizeColumnW, 0))
+	v.hdrDiv2.Move(fyne.NewPos(ne+sz, 0))
 	hdrY := centerY(headerH, measureHeight())
 	v.hdrName.Move(fyne.NewPos(3, hdrY+1))
-	v.hdrSize.Move(fyne.NewPos(nameColumnW(size.Width)+6, hdrY+1))
-	v.hdrDate.Move(fyne.NewPos(nameColumnW(size.Width)+sizeColumnW+7, hdrY+1))
-	v.hdrName.Resize(fyne.NewSize(nameColumnW(size.Width)-40, 18))
-	v.hdrSize.Resize(fyne.NewSize(sizeColumnW, 18))
+	v.hdrSize.Move(fyne.NewPos(ne+6, hdrY+1))
+	v.hdrDate.Move(fyne.NewPos(ne+sz+7, hdrY+1))
+	v.hdrName.Resize(fyne.NewSize(ne-40, 18))
+	v.hdrSize.Resize(fyne.NewSize(sz, 18))
 	v.hdrDate.Resize(fyne.NewSize(100, 18))
 	v.sortIcon.Resize(fyne.NewSize(12, 12))
-	v.sortIcon.Move(fyne.NewPos(nameColumnW(size.Width)-22, (headerH-12)/2))
+	v.sortIcon.Move(fyne.NewPos(ne-22, (headerH-12)/2))
+	v.colHandle1.Resize(fyne.NewSize(9, headerH))
+	v.colHandle1.Move(fyne.NewPos(ne-4, 0))
+	v.colHandle2.Resize(fyne.NewSize(9, headerH))
+	v.colHandle2.Move(fyne.NewPos(ne+sz-4, 0))
 }
 
 func (r *fileViewRenderer) hideHeader() {
@@ -822,6 +955,8 @@ func (r *fileViewRenderer) hideHeader() {
 	r.v.hdrSize.Hide()
 	r.v.hdrDate.Hide()
 	r.v.sortIcon.Hide()
+	r.v.colHandle1.Hide()
+	r.v.colHandle2.Hide()
 }
 
 func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, y float32, size fyne.Size, visibleH, header float32) {
@@ -870,7 +1005,7 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 	if nameW < 10 {
 		nameW = 10
 	}
-	row.name.Text = elide(e.name, nameW, textSize)
+	row.name.Text = v.elidedName(idx, nameW, 1)
 	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignLeading
 	row.name.Move(fyne.NewPos(nameX, y+(rh-26)/2-2))
@@ -926,7 +1061,7 @@ func (r *fileViewRenderer) layoutIconRow(row *fileRow, idx int, e fileEntry, x, 
 	row.icon.Move(fyne.NewPos(x+(cellW-iconSize)/2, y+10))
 
 	row.name.Show()
-	row.name.Text = elide(e.name, cellW-8, textSize)
+	row.name.Text = v.elidedName(idx, cellW-8, 2)
 	row.name.Color = colText
 	row.name.Alignment = fyne.TextAlignCenter
 	row.name.Move(fyne.NewPos(x+4, y+iconSize+14))
@@ -998,11 +1133,11 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	row.date.Show()
 	row.name.Alignment = fyne.TextAlignLeading
 	nameX := 23 + indent + iconSize + 5
-	nameW := nameColumnW(size.Width) - nameX - 16
+	nameW := v.nameEnd(size.Width) - nameX - 16
 	if nameW < 10 {
 		nameW = 10
 	}
-	row.name.Text = elide(e.name, nameW, textSize)
+	row.name.Text = v.elidedName(idx, nameW, 0)
 	row.name.Color = colText
 	textY := y + (rh-rowH)/2 + 1
 	row.name.Move(fyne.NewPos(nameX, textY))
@@ -1010,15 +1145,15 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	row.name.Refresh()
 
 	row.size.Text = formatSize(e.size, e.isDir, e.itemCount)
-	row.size.Move(fyne.NewPos(nameColumnW(size.Width), textY))
-	row.size.Resize(fyne.NewSize(sizeColumnW-4, 24))
+	row.size.Move(fyne.NewPos(v.nameEnd(size.Width), textY))
+	row.size.Resize(fyne.NewSize(v.szW()-4, 24))
 	row.size.Alignment = fyne.TextAlignTrailing
 	row.size.Color = colText
 	row.size.Refresh()
 
 	row.date.Text = formatDate(e.modTime)
-	row.date.Move(fyne.NewPos(nameColumnW(size.Width)+sizeColumnW+5, textY))
-	row.date.Resize(fyne.NewSize(size.Width-nameColumnW(size.Width)-sizeColumnW-scrollbarW-18, 24))
+	row.date.Move(fyne.NewPos(v.nameEnd(size.Width)+v.szW()+5, textY))
+	row.date.Resize(fyne.NewSize(size.Width-v.nameEnd(size.Width)-v.szW()-scrollbarW-18, 24))
 	row.date.Color = colText
 	row.date.Refresh()
 }
@@ -1038,10 +1173,6 @@ const (
 	sizeColumnW float32 = 109
 	dateColumnW float32 = 215
 )
-
-func nameColumnW(total float32) float32 {
-	return total - scrollbarW - sizeColumnW - dateColumnW
-}
 
 func (r *fileViewRenderer) MinSize() fyne.Size { return fyne.NewSize(500, 300) }
 

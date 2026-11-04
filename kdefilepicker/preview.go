@@ -3,9 +3,14 @@
 package kdefilepicker
 
 import (
+	"image"
 	"os"
 	"path/filepath"
 	"strings"
+
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -15,8 +20,9 @@ import (
 type previewPane struct {
 	widget.BaseWidget
 
-	path  string
-	entry fileEntry
+	path    string
+	entry   fileEntry
+	loadSeq int // guards against stale async image loads
 
 	bg       *canvas.Rectangle
 	headerBg *canvas.Rectangle
@@ -63,6 +69,7 @@ func (p *previewPane) CreateRenderer() fyne.WidgetRenderer {
 func (p *previewPane) MinSize() fyne.Size { return fyne.NewSize(280, 200) }
 
 func (p *previewPane) Clear() {
+	p.loadSeq++ // invalidate in-flight async loads
 	if p.img == nil || p.icon == nil || p.name == nil {
 		p.path = ""
 		p.entry = fileEntry{}
@@ -81,6 +88,8 @@ func (p *previewPane) Clear() {
 }
 
 func (p *previewPane) SetFile(path string, e fileEntry) {
+	p.loadSeq++
+	seq := p.loadSeq
 	p.path = path
 	p.entry = e
 	p.name.Text = elide(e.name, 250, textSize)
@@ -95,19 +104,54 @@ func (p *previewPane) SetFile(path string, e fileEntry) {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch ext {
 	case ".png", ".jpg", ".jpeg", ".gif":
+		// Show the file icon immediately and decode the image in the
+		// background; synchronous decode of large photos made selecting
+		// such a file take hundreds of milliseconds.
 		p.img.Hide()
-		p.icon.Hide()
-		img := canvas.NewImageFromFile(path)
-		img.FillMode = canvas.ImageFillContain
-		p.img = img
-		p.img.Show()
+		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
+		p.icon.Show()
+		go func() {
+			f, err := os.Open(path)
+			if err != nil {
+				return
+			}
+			defer f.Close()
+			img, _, err := image.Decode(f)
+			if err != nil {
+				return
+			}
+			fyne.Do(func() {
+				if seq != p.loadSeq || p.path != path {
+					return // superseded by a newer selection
+				}
+				ni := canvas.NewImageFromImage(img)
+				ni.FillMode = canvas.ImageFillContain
+				p.img = ni
+				p.img.Show()
+				p.icon.Hide()
+				canvas.Refresh(p)
+			})
+		}()
 	case ".svg":
-		if data, err := os.ReadFile(path); err == nil {
-			p.icon.Hide()
-			p.img = canvas.NewImageFromResource(fyne.NewStaticResource(filepath.Base(path), data))
-			p.img.FillMode = canvas.ImageFillContain
-			p.img.Show()
-		}
+		p.img.Hide()
+		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)
+		p.icon.Show()
+		go func() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return
+			}
+			fyne.Do(func() {
+				if seq != p.loadSeq || p.path != path {
+					return
+				}
+				p.icon.Hide()
+				p.img = canvas.NewImageFromResource(fyne.NewStaticResource(filepath.Base(path), data))
+				p.img.FillMode = canvas.ImageFillContain
+				p.img.Show()
+				canvas.Refresh(p)
+			})
+		}()
 	default:
 		p.img.Hide()
 		p.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colTextMuted)

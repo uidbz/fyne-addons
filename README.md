@@ -38,6 +38,12 @@ modal-sized window, or compose it into a larger application.
 * **Draggable chrome** — the vertical scroll bar and zoom slider support
   click-to-jump and drag tracking. The zoom slider scales both the icon grid
   and the row icons in details/compact views.
+* **Resizable details columns** — drag the column separators in the header;
+  double-click a separator to reset it. Clicking a header sorts by that column.
+* **Editable path bar** — click any empty part of the location bar (or `Ctrl+L`)
+  to switch to an editable path with the text pre-selected, like KDE. Text in
+  the name/path fields supports mouse-drag selection, Shift+arrow selection,
+  Ctrl+A, and Ctrl+arrow word jumps (separators count as word boundaries).
 * **Native cursor** — custom widgets do not override the system pointer shape.
 * **Single-click option** — optionally enter folders with a single click while
   keeping expander arrows available for in-place tree expansion.
@@ -75,8 +81,9 @@ folder rows into single-click navigation:
 
 * Go 1.24 or newer
 * Fyne v2.8.2 (declared by the module)
-* Linux for the Devices group (`lsblk`); the rest of the dialog works on other
-  desktop platforms.
+* Linux for the Devices group (`lsblk`). On Windows the Devices group lists
+  fixed drives (volume labels and capacity bars) and mapped network drives
+  (named by their UNC share). Other desktop platforms skip the Devices group.
 
 ### Installation
 

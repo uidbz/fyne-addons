@@ -409,7 +409,10 @@ type lineEdit struct {
 	widget.BaseWidget
 
 	text        []rune
+	widths      []float32 // cumulative widths: widths[i] is the measured width of text[:i]
 	cursor      int
+	anchor      int // selection anchor; anchor == cursor when nothing is selected
+	viewOffset  int // index of the first rune currently painted
 	placeholder string
 	focused     bool
 	hovered     bool
@@ -421,6 +424,7 @@ type lineEdit struct {
 	onEscape    func()
 
 	bg    *canvas.Rectangle
+	sel   *canvas.Rectangle
 	txt   *canvas.Text
 	caret *canvas.Rectangle
 	ph    *canvas.Text
@@ -434,22 +438,38 @@ func newLineEdit() *lineEdit {
 
 func (e *lineEdit) CreateRenderer() fyne.WidgetRenderer {
 	e.bg = newRect(colCombo, colBorder, 1, 4)
+	e.sel = newRect(colPlaceSelection, colTransparent, 0, 0)
+	e.sel.Hide()
 	e.txt = canvas.NewText("", colText)
 	e.txt.TextSize = textSize
 	e.ph = canvas.NewText("", colTextMuted)
 	e.ph.TextSize = textSize
 	e.ph.Hide()
 	e.caret = newRect(colText, colTransparent, 0, 0)
-	return &lineEditRenderer{e: e, objs: []fyne.CanvasObject{e.bg, e.ph, e.txt, e.caret}}
+	return &lineEditRenderer{e: e, objs: []fyne.CanvasObject{e.bg, e.sel, e.ph, e.txt, e.caret}}
 }
 
 func (e *lineEdit) MinSize() fyne.Size { return fyne.NewSize(120, 37) }
 
 func (e *lineEdit) Text() string { return string(e.text) }
 
+// measureWidths rebuilds the cumulative width table for the current text.
+// Everything cursor- and selection-related (caret placement, click mapping,
+// visible-window selection) is computed from this table so no per-event
+// prefix measurement loops are needed — those made long paths quadratic and
+// sluggish on Windows.
+func (e *lineEdit) measureWidths() {
+	e.widths = make([]float32, len(e.text)+1)
+	for i, r := range e.text {
+		e.widths[i+1] = e.widths[i] + fyne.MeasureText(string(r), textSize, fyne.TextStyle{}).Width
+	}
+}
+
 func (e *lineEdit) SetText(text string) {
 	e.text = []rune(text)
 	e.cursor = len(e.text)
+	e.anchor = e.cursor
+	e.measureWidths()
 	if e.onChanged != nil {
 		e.onChanged(text)
 	}
@@ -471,6 +491,7 @@ func (e *lineEdit) FocusGained() {
 
 func (e *lineEdit) FocusLost() {
 	e.focused = false
+	e.anchor = e.cursor
 	e.Refresh()
 }
 
@@ -478,13 +499,28 @@ func (e *lineEdit) Tapped(pe *fyne.PointEvent) {
 	if c := fyne.CurrentApp().Driver().CanvasForObject(e); c != nil {
 		c.Focus(e)
 	}
-	e.setCursorFromX(pe.Position.X)
+	e.setCursorFromX(pe.Position.X, false)
 	if e.onTapped != nil {
 		e.onTapped()
 	}
 }
 
-func (e *lineEdit) DoubleTapped(pe *fyne.PointEvent) { e.Tapped(pe) }
+func (e *lineEdit) DoubleTapped(*fyne.PointEvent) { e.selectAll() }
+
+// DragStart/Dragged implement fyne.Draggable for mouse selection: the press
+// places the caret (and anchor), dragging extends the selection to the caret.
+func (e *lineEdit) DragStart(ev *fyne.DragEvent) {
+	if c := fyne.CurrentApp().Driver().CanvasForObject(e); c != nil {
+		c.Focus(e)
+	}
+	e.setCursorFromX(ev.Position.X, false)
+}
+
+func (e *lineEdit) Dragged(ev *fyne.DragEvent) {
+	e.setCursorFromX(ev.Position.X, true)
+}
+
+func (e *lineEdit) DragEnd() {}
 
 func (e *lineEdit) MouseIn(*desktop.MouseEvent) {
 	e.hovered = true
@@ -493,56 +529,171 @@ func (e *lineEdit) MouseIn(*desktop.MouseEvent) {
 
 func (e *lineEdit) MouseMoved(*desktop.MouseEvent) {}
 func (e *lineEdit) MouseOut()                      { e.hovered = false; e.Refresh() }
-func (e *lineEdit) setCursorFromX(x float32) {
-	const pad = 7.0
-	text := string(e.text)
-	best := 0
-	for i := 0; i <= len(e.text); i++ {
-		w := fyne.MeasureText(string([]rune(text)[:i]), textSize, fyne.TextStyle{}).Width
-		if pad+w <= x {
-			best = i
+
+// selBounds returns the normalized selection range [lo, hi).
+func (e *lineEdit) selBounds() (lo, hi int) {
+	lo, hi = e.anchor, e.cursor
+	if hi < lo {
+		lo, hi = hi, lo
+	}
+	return
+}
+
+func (e *lineEdit) hasSelection() bool { return e.anchor != e.cursor }
+
+// SelectedText returns the selected text (empty when nothing is selected).
+func (e *lineEdit) SelectedText() string {
+	lo, hi := e.selBounds()
+	return string(e.text[lo:hi])
+}
+
+func (e *lineEdit) selectAll() {
+	e.anchor = 0
+	e.cursor = len(e.text)
+	e.Refresh()
+}
+
+// deleteSelection removes the selection if there is one; the cursor lands at
+// the start of the removed range. It reports whether anything was deleted.
+func (e *lineEdit) deleteSelection() bool {
+	if !e.hasSelection() {
+		return false
+	}
+	lo, hi := e.selBounds()
+	e.text = append(e.text[:lo], e.text[hi:]...)
+	e.cursor, e.anchor = lo, lo
+	return true
+}
+
+// shiftDown reports the live Shift modifier. Fyne delivers plain KeyEvents
+// for Shift+arrows (no CustomShortcut is synthesised for Shift alone), and
+// text widgets are expected to query the driver, like widget.Entry does.
+func (e *lineEdit) shiftDown() bool {
+	if dd, ok := fyne.CurrentApp().Driver().(desktop.Driver); ok {
+		return dd.CurrentKeyModifiers()&fyne.KeyModifierShift != 0
+	}
+	return false
+}
+
+// wordBoundary returns the word boundary from pos looking in direction dir
+// (-1 backwards, +1 forwards). Path separators count as boundaries so
+// Ctrl+arrows jump between path segments.
+func (e *lineEdit) wordBoundary(pos, dir int) int {
+	isBoundary := func(r rune) bool { return r == ' ' || r == '/' || r == '\\' }
+	i := pos
+	for i >= 0 && i < len(e.text) && isBoundary(e.text[i]) {
+		i += dir
+	}
+	for i >= 0 && i < len(e.text) && !isBoundary(e.text[i]) {
+		i += dir
+	}
+	if i < 0 {
+		return 0
+	}
+	if i > len(e.text) {
+		return len(e.text)
+	}
+	return i
+}
+
+func (e *lineEdit) setCursorFromX(x float32, extend bool) {
+	if len(e.widths) != len(e.text)+1 {
+		e.measureWidths()
+	}
+	base := e.viewOffset
+	if base > len(e.text) {
+		base = len(e.text)
+	}
+	target := x - editPadX
+	// Largest cursor position whose rendered x is still at or left of the
+	// pointer (widths is monotonically increasing).
+	lo, hi := base, len(e.text)
+	for lo < hi {
+		mid := lo + (hi-lo+1)/2
+		if e.widths[mid]-e.widths[base] <= target {
+			lo = mid
 		} else {
-			break
+			hi = mid - 1
 		}
 	}
-	e.cursor = best
+	e.cursor = lo
+	if !extend {
+		e.anchor = lo
+	}
 	e.Refresh()
 }
 
 func (e *lineEdit) TypedRune(r rune) {
+	e.deleteSelection()
 	e.text = append(e.text[:e.cursor], append([]rune{r}, e.text[e.cursor:]...)...)
 	e.cursor++
+	e.anchor = e.cursor
 	e.notifyChanged()
 }
 
 func (e *lineEdit) TypedKey(ev *fyne.KeyEvent) {
+	shift := e.shiftDown()
 	switch ev.Name {
 	case fyne.KeyBackspace:
-		if e.cursor > 0 {
+		if e.deleteSelection() {
+			e.notifyChanged()
+		} else if e.cursor > 0 {
 			e.text = append(e.text[:e.cursor-1], e.text[e.cursor:]...)
 			e.cursor--
+			e.anchor = e.cursor
 			e.notifyChanged()
 		}
 	case fyne.KeyDelete:
-		if e.cursor < len(e.text) {
+		if e.deleteSelection() {
+			e.notifyChanged()
+		} else if e.cursor < len(e.text) {
 			e.text = append(e.text[:e.cursor], e.text[e.cursor+1:]...)
+			e.anchor = e.cursor
 			e.notifyChanged()
 		}
 	case fyne.KeyLeft:
-		if e.cursor > 0 {
+		switch {
+		case shift:
+			if e.cursor > 0 {
+				e.cursor--
+			}
+			e.Refresh()
+		case e.hasSelection():
+			lo, _ := e.selBounds()
+			e.cursor, e.anchor = lo, lo
+			e.Refresh()
+		case e.cursor > 0:
 			e.cursor--
+			e.anchor = e.cursor
 			e.Refresh()
 		}
 	case fyne.KeyRight:
-		if e.cursor < len(e.text) {
+		switch {
+		case shift:
+			if e.cursor < len(e.text) {
+				e.cursor++
+			}
+			e.Refresh()
+		case e.hasSelection():
+			_, hi := e.selBounds()
+			e.cursor, e.anchor = hi, hi
+			e.Refresh()
+		case e.cursor < len(e.text):
 			e.cursor++
+			e.anchor = e.cursor
 			e.Refresh()
 		}
 	case fyne.KeyHome:
 		e.cursor = 0
+		if !shift {
+			e.anchor = 0
+		}
 		e.Refresh()
 	case fyne.KeyEnd:
 		e.cursor = len(e.text)
+		if !shift {
+			e.anchor = e.cursor
+		}
 		e.Refresh()
 	case fyne.KeyReturn, fyne.KeyEnter:
 		if e.onSubmitted != nil {
@@ -556,6 +707,7 @@ func (e *lineEdit) TypedKey(ev *fyne.KeyEvent) {
 }
 
 func (e *lineEdit) notifyChanged() {
+	e.measureWidths()
 	if e.onChanged != nil {
 		e.onChanged(string(e.text))
 	}
@@ -564,19 +716,54 @@ func (e *lineEdit) notifyChanged() {
 
 func (e *lineEdit) TypedShortcut(s fyne.Shortcut) {
 	clip := fyne.CurrentApp().Clipboard()
-	switch s.(type) {
+	switch sc := s.(type) {
+	case *fyne.ShortcutSelectAll:
+		e.selectAll()
+	case *fyne.ShortcutCopy:
+		if e.hasSelection() {
+			clip.SetContent(e.SelectedText())
+		} else {
+			clip.SetContent(string(e.text))
+		}
+	case *fyne.ShortcutCut:
+		if e.hasSelection() {
+			clip.SetContent(e.SelectedText())
+			e.deleteSelection()
+		} else {
+			clip.SetContent(string(e.text))
+			e.text = nil
+			e.cursor, e.anchor = 0, 0
+		}
+		e.notifyChanged()
 	case *fyne.ShortcutPaste:
 		text := strings.ReplaceAll(clip.Content(), "\n", "")
+		e.deleteSelection()
 		e.text = append(e.text[:e.cursor], append([]rune(text), e.text[e.cursor:]...)...)
 		e.cursor += len([]rune(text))
+		e.anchor = e.cursor
 		e.notifyChanged()
-	case *fyne.ShortcutCut:
-		clip.SetContent(string(e.text))
-		e.text = nil
-		e.cursor = 0
-		e.notifyChanged()
-	case *fyne.ShortcutCopy:
-		clip.SetContent(string(e.text))
+	case *desktop.CustomShortcut:
+		if sc.Modifier&fyne.KeyModifierControl == 0 {
+			return
+		}
+		pos := -1
+		switch sc.KeyName {
+		case fyne.KeyLeft:
+			pos = e.wordBoundary(e.cursor, -1)
+		case fyne.KeyRight:
+			pos = e.wordBoundary(e.cursor, +1)
+		case fyne.KeyHome:
+			pos = 0
+		case fyne.KeyEnd:
+			pos = len(e.text)
+		default:
+			return
+		}
+		if sc.Modifier&fyne.KeyModifierShift == 0 && !e.shiftDown() {
+			e.anchor = pos
+		}
+		e.cursor = pos
+		e.Refresh()
 	}
 }
 
@@ -588,49 +775,91 @@ type lineEditRenderer struct {
 const editPadX = 7.0
 
 func (r *lineEditRenderer) Layout(size fyne.Size) {
-	r.e.bg.Resize(size)
-	r.e.bg.Move(fyne.NewPos(0, 0))
+	e := r.e
+	if len(e.widths) != len(e.text)+1 {
+		e.measureWidths()
+	}
+	e.bg.Resize(size)
+	e.bg.Move(fyne.NewPos(0, 0))
 
 	textH := fyne.MeasureText("Ag", textSize, fyne.TextStyle{}).Height
 	textY := (size.Height-textH)/2 + 1
 
-	full := string(r.e.text)
 	avail := size.Width - 2*editPadX
-	display, offset := visibleText(full, r.e.cursor, avail)
-	r.e.txt.Text = display
-	r.e.txt.Resize(fyne.NewSize(avail, textH))
-	r.e.txt.Move(fyne.NewPos(editPadX, textY))
+	display, offset := r.visibleText(avail)
+	e.viewOffset = offset
+	e.txt.Text = display
+	e.txt.Resize(fyne.NewSize(avail, textH))
+	e.txt.Move(fyne.NewPos(editPadX, textY))
 
-	r.e.ph.Text = r.e.placeholder
-	r.e.ph.Resize(fyne.NewSize(avail, textH))
-	r.e.ph.Move(fyne.NewPos(editPadX, textY))
+	e.ph.Text = e.placeholder
+	e.ph.Resize(fyne.NewSize(avail, textH))
+	e.ph.Move(fyne.NewPos(editPadX, textY))
+
+	// Rendered x of rune index i, relative to this widget.
+	xOf := func(i int) float32 { return editPadX + e.widths[i] - e.widths[offset] }
+
+	lo, hi := e.selBounds()
+	viewEnd := offset + len([]rune(display))
+	if lo < offset {
+		lo = offset
+	}
+	if hi > viewEnd {
+		hi = viewEnd
+	}
+	if lo < hi {
+		e.sel.Show()
+		e.sel.Resize(fyne.NewSize(xOf(hi)-xOf(lo), textH-2))
+		e.sel.Move(fyne.NewPos(xOf(lo), textY+1))
+	} else {
+		e.sel.Hide()
+	}
 
 	cx := float32(editPadX)
-	if offset <= r.e.cursor && r.e.cursor <= offset+len([]rune(display)) {
-		prefix := string([]rune(full)[offset:r.e.cursor])
-		cx += fyne.MeasureText(prefix, textSize, fyne.TextStyle{}).Width
+	if offset <= e.cursor && e.cursor <= offset+len([]rune(display)) {
+		cx = xOf(e.cursor)
 	}
-	r.e.caret.Resize(fyne.NewSize(1, textH-2))
-	r.e.caret.Move(fyne.NewPos(cx, textY+1))
+	e.caret.Resize(fyne.NewSize(1, textH-2))
+	e.caret.Move(fyne.NewPos(cx, textY+1))
 }
 
-func visibleText(full string, cursor int, avail float32) (string, int) {
-	runes := []rune(full)
-	if fyne.MeasureText(full, textSize, fyne.TextStyle{}).Width <= avail {
-		return full, 0
+// visibleText picks the window of text to paint so the cursor stays in
+// view, using the cumulative width table (binary searches, no measuring).
+func (r *lineEditRenderer) visibleText(avail float32) (string, int) {
+	e := r.e
+	n := len(e.text)
+	if n == 0 {
+		return "", 0
 	}
-	start := 0
-	for start < cursor {
-		if fyne.MeasureText(string(runes[start:cursor]), textSize, fyne.TextStyle{}).Width <= avail-8 {
-			break
+	if e.widths[n] <= avail {
+		return string(e.text), 0
+	}
+	c := e.cursor
+	if c > n {
+		c = n
+	}
+	// start: smallest s in [0, c] such that [s, c] fits.
+	lo, hi := 0, c
+	for lo < hi {
+		mid := (lo + hi) / 2
+		if e.widths[c]-e.widths[mid] <= avail-8 {
+			hi = mid
+		} else {
+			lo = mid + 1
 		}
-		start++
 	}
-	end := len(runes)
-	for end > start && fyne.MeasureText(string(runes[start:end]), textSize, fyne.TextStyle{}).Width > avail {
-		end--
+	start := lo
+	// end: largest t in [start, n] such that [start, t] fits.
+	lo, hi = start, n
+	for lo < hi {
+		mid := lo + (hi-lo+1)/2
+		if e.widths[mid]-e.widths[start] <= avail {
+			lo = mid
+		} else {
+			hi = mid - 1
+		}
 	}
-	return string(runes[start:end]), start
+	return string(e.text[start:lo]), start
 }
 
 func (r *lineEditRenderer) MinSize() fyne.Size { return fyne.NewSize(120, 37) }

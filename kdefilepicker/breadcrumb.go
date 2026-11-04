@@ -17,6 +17,7 @@ type crumb struct {
 	label string
 	path  string
 	x, w  float32
+	tw    float32 // measured text width, cached at path change
 }
 
 type breadcrumb struct {
@@ -28,6 +29,7 @@ type breadcrumb struct {
 	hover      int
 	onNavigate func(string)
 	onDropdown func()
+	onEdit     func()
 
 	bg        *canvas.Rectangle
 	arrow     *canvas.Image
@@ -55,7 +57,18 @@ func (b *breadcrumb) MinSize() fyne.Size { return fyne.NewSize(200, 37) }
 func (b *breadcrumb) SetPath(path string) {
 	b.path = path
 	b.rebuild()
+	b.measure()
 	b.Refresh()
+}
+
+// measure caches each segment's text width so hover refreshes and relayouts
+// never re-measure text (the old per-layout measuring made hovering over a
+// long path expensive, especially on Windows).
+func (b *breadcrumb) measure() {
+	for i := range b.crumbs {
+		style := fyne.TextStyle{Bold: i == len(b.crumbs)-1}
+		b.crumbs[i].tw = fyne.MeasureText(b.crumbs[i].label, textSize, style).Width
+	}
 }
 
 func (b *breadcrumb) rebuild() {
@@ -114,6 +127,11 @@ func (b *breadcrumb) Tapped(e *fyne.PointEvent) {
 			return
 		}
 	}
+	// Like KDE: a click on the location bar that hits no segment switches
+	// the bar to an editable path field.
+	if b.onEdit != nil {
+		b.onEdit()
+	}
 }
 
 func (b *breadcrumb) MouseIn(*desktop.MouseEvent) {}
@@ -166,9 +184,11 @@ func (r *breadcrumbRenderer) Layout(size fyne.Size) {
 	for i, c := range b.crumbs {
 		t := b.texts[i]
 		t.Text = c.label
-		style := fyne.TextStyle{Bold: i == len(b.crumbs)-1}
-		t.TextStyle = style
-		w := fyne.MeasureText(c.label, textSize, style).Width
+		t.TextStyle = fyne.TextStyle{Bold: i == len(b.crumbs)-1}
+		w := c.tw
+		if w == 0 {
+			w = fyne.MeasureText(c.label, textSize, t.TextStyle).Width
+		}
 		b.crumbs[i].x = x - 4
 		b.crumbs[i].w = w + 8
 		t.Move(fyne.NewPos(x, centerY(size.Height, measureHeight())-1))
