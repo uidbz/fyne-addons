@@ -203,8 +203,10 @@ func (r *breezeMenuRenderer) Layout(size fyne.Size) {
 			textX = 36
 		} else if e.icon != nil {
 			row.icon.Show()
-			row.icon.Resource = e.icon
-			row.icon.Refresh()
+			if row.icon.Resource != e.icon {
+				row.icon.Resource = e.icon
+				row.icon.Refresh()
+			}
 			row.icon.Move(fyne.NewPos(12, y+(menuItemH-16)/2))
 			row.icon.Resize(fyne.NewSize(16, 16))
 			row.check.Hide()

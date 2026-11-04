@@ -148,6 +148,26 @@ func TestBreadcrumbClickEmptyStartsPathEdit(t *testing.T) {
 	}
 }
 
+func TestPathEditTracksNavigation(t *testing.T) {
+	test.NewApp()
+	dir := makeTestDir(t)
+	d := NewOpenDialog(dir)
+	d.noDelayedFocus = true
+	w := test.NewWindow(d)
+	defer w.Close()
+	w.Resize(fyne.NewSize(1400, 869))
+
+	d.beginPathEdit()
+	sub := filepath.Join(dir, "folder")
+	d.openDir(sub)
+	if got := d.pathEdit.Text(); got != sub {
+		t.Fatalf("path field text = %q, want %q", got, sub)
+	}
+	if d.pathEdit.anchor != 0 || d.pathEdit.cursor != len([]rune(sub)) {
+		t.Fatal("refilled path should be fully selected")
+	}
+}
+
 func TestDetailsColumnResizeAndSort(t *testing.T) {
 	test.NewApp()
 	dir := makeTestDir(t)
@@ -163,11 +183,19 @@ func TestDetailsColumnResizeAndSort(t *testing.T) {
 	if v.sizeColW != 0 || v.szW() != sizeColumnW {
 		t.Fatalf("default size column = %v", v.szW())
 	}
+	// The desktop driver never calls DragStart, so the handle must arm
+	// lazily from the first Dragged event and accumulate per-event deltas.
 	h1 := v.colHandle1
-	h1.DragStart(&fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: fyne.NewPos(500, 10)}})
-	h1.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: fyne.NewPos(550, 10)}})
-	if want := sizeColumnW - 50; v.szW() != want {
+	h1.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: fyne.NewPos(500, 10)}, Dragged: fyne.NewDelta(-30, 0)})
+	h1.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: fyne.NewPos(470, 10)}, Dragged: fyne.NewDelta(-20, 0)})
+	if want := sizeColumnW + 50; v.szW() != want {
 		t.Fatalf("after drag size column = %v, want %v", v.szW(), want)
+	}
+	// A new drag after release re-arms from the current width.
+	h1.DragEnd()
+	h1.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{AbsolutePosition: fyne.NewPos(600, 10)}, Dragged: fyne.NewDelta(10, 0)})
+	if want := sizeColumnW + 40; v.szW() != want {
+		t.Fatalf("after second drag size column = %v, want %v", v.szW(), want)
 	}
 	h1.DoubleTapped(&fyne.PointEvent{})
 	if v.sizeColW != 0 {

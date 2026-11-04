@@ -173,6 +173,9 @@ func (v *fileView) elidedName(idx int, w float32, mode byte) string {
 		return ""
 	}
 	e := &v.filtered[idx]
+	if q := float32(int(w/4)) * 4; q > 0 {
+		w = q // quantise so column drags reuse the cache instead of re-measuring every pixel
+	}
 	if e.el.mode == mode && e.el.w == w && e.el.out != "" {
 		return e.el.out
 	}
@@ -186,11 +189,12 @@ func (v *fileView) elidedName(idx int, w float32, mode byte) string {
 type colHandle struct {
 	widget.BaseWidget
 
-	view    *fileView
-	which   int // 0: name|size separator, 1: size|date separator
-	start   float32
-	startSz float32
-	startDt float32
+	view   *fileView
+	which  int // 0: name|size separator, 1: size|date separator
+	armed  bool
+	acc    float32
+	baseSz float32
+	baseDt float32
 }
 
 func newColHandle(v *fileView, which int) *colHandle {
@@ -205,24 +209,33 @@ func (h *colHandle) CreateRenderer() fyne.WidgetRenderer {
 
 func (h *colHandle) MinSize() fyne.Size { return fyne.NewSize(9, headerH) }
 
-func (h *colHandle) DragStart(ev *fyne.DragEvent) {
-	h.start = ev.AbsolutePosition.X
-	h.startSz = h.view.szW()
-	h.startDt = h.view.dtW()
+func (h *colHandle) DragStart(*fyne.DragEvent) { h.arm() }
+
+// arm captures the column widths the drag started from. The desktop driver
+// never calls DragStart, so Dragged arms lazily; accumulating per-event
+// deltas (instead of tracking absolute positions) also keeps the drag
+// stable while the handle itself moves with the separator.
+func (h *colHandle) arm() {
+	if h.armed {
+		return
+	}
+	h.acc, h.baseSz, h.baseDt = 0, h.view.szW(), h.view.dtW()
+	h.armed = true
 }
 
 func (h *colHandle) Dragged(ev *fyne.DragEvent) {
-	dx := ev.AbsolutePosition.X - h.start
+	h.arm()
+	h.acc += ev.Dragged.DX
 	switch h.which {
 	case 0:
-		h.view.sizeColW = clamp(h.startSz-dx, 50, 600)
+		h.view.sizeColW = clamp(h.baseSz-h.acc, 50, 600)
 	case 1:
-		h.view.dateColW = clamp(h.startDt-dx, 90, 600)
+		h.view.dateColW = clamp(h.baseDt-h.acc, 90, 600)
 	}
 	h.view.Refresh()
 }
 
-func (h *colHandle) DragEnd() {}
+func (h *colHandle) DragEnd() { h.armed, h.acc = false, 0 }
 
 func (h *colHandle) DoubleTapped(*fyne.PointEvent) {
 	if h.which == 0 {
@@ -995,8 +1008,7 @@ func (r *fileViewRenderer) layoutCompactRow(row *fileRow, idx int, e fileEntry, 
 	row.exp.Hide()
 	iconSize := clamp(v.detailIconSize, 16, 48)
 	row.icon.Show()
-	row.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colText)
-	row.icon.Refresh()
+	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(8, y+(rh-iconSize)/2))
 	row.name.Show()
@@ -1055,8 +1067,7 @@ func (r *fileViewRenderer) layoutIconRow(row *fileRow, idx int, e fileEntry, x, 
 
 	row.exp.Hide()
 	row.icon.Show()
-	row.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colText)
-	row.icon.Refresh()
+	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(x+(cellW-iconSize)/2, y+10))
 
@@ -1113,18 +1124,16 @@ func (r *fileViewRenderer) layoutRow(row *fileRow, idx int, e fileEntry, y float
 	row.exp.Resize(fyne.NewSize(14, 14))
 	if e.isDir {
 		if v.expanded[e.path] {
-			row.exp.Resource = iconResource("go-down", colTextMuted)
+			setIconResource(row.exp, "go-down", colTextMuted)
 		} else {
-			row.exp.Resource = iconResource("go-next", colTextMuted)
+			setIconResource(row.exp, "go-next", colTextMuted)
 		}
-		row.exp.Refresh()
 		row.exp.Show()
 	}
 
 	iconSize := clamp(v.detailIconSize, 16, 64)
 	row.icon.Show()
-	row.icon.Resource = iconResource(fileIconName(e.name, e.isDir), colText)
-	row.icon.Refresh()
+	setIconResource(row.icon, fileIconName(e.name, e.isDir), colText)
 	row.icon.Resize(fyne.NewSize(iconSize, iconSize))
 	row.icon.Move(fyne.NewPos(23+indent, y+(rh-iconSize)/2-1))
 
@@ -1179,11 +1188,10 @@ func (r *fileViewRenderer) MinSize() fyne.Size { return fyne.NewSize(500, 300) }
 func (r *fileViewRenderer) Refresh() {
 	if r.v.sortIcon != nil {
 		if r.v.ascending {
-			r.v.sortIcon.Resource = iconResource("go-up", colTextMuted)
+			setIconResource(r.v.sortIcon, "go-up", colTextMuted)
 		} else {
-			r.v.sortIcon.Resource = iconResource("arrow-down", colTextMuted)
+			setIconResource(r.v.sortIcon, "arrow-down", colTextMuted)
 		}
-		r.v.sortIcon.Refresh()
 	}
 	if r.v.focused {
 		r.v.scroll.FillColor = colScroll

@@ -476,6 +476,7 @@ func (d *Dialog) loadDir(dir string) {
 	d.updateNav()
 	d.updateOpenState()
 	d.preview.Clear()
+	d.syncPathEdit()
 }
 
 func (d *Dialog) openDir(dir string) {
@@ -517,6 +518,7 @@ func (d *Dialog) openDir(dir string) {
 	d.preview.Clear()
 	d.updateNav()
 	d.updateOpenState()
+	d.syncPathEdit()
 }
 
 func (d *Dialog) back() {
@@ -660,6 +662,16 @@ func (d *Dialog) beginPathEdit() {
 func (d *Dialog) endPathEdit() {
 	d.editing = false
 	d.requestFocus(d.bottom.name)
+}
+
+// syncPathEdit keeps the editable path field in sync when the directory
+// changes while it is showing (sidebar clicks, history navigation, …):
+// like KDE, the edit field is refilled with the new path, fully selected.
+func (d *Dialog) syncPathEdit() {
+	if d.editing {
+		d.pathEdit.SetText(d.currentDir)
+		d.pathEdit.selectAll()
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -45,6 +45,21 @@ func iconResource(name string, clr color.Color) fyne.Resource {
 	return res
 }
 
+// setIconResource points an existing icon image at a (cached) theme icon,
+// refreshing only when the source actually changed. canvas.Image.Refresh
+// re-parses the SVG in Fyne 2.8 (it recomputes the aspect ratio every
+// time), so unconditionally refreshing unchanged icons turned every
+// selection or hover into dozens of XML parses: the reported multi-
+// hundred-millisecond stalls on Windows.
+func setIconResource(img *canvas.Image, name string, clr color.Color) {
+	res := iconResource(name, clr)
+	if img.Resource == res {
+		return
+	}
+	img.Resource = res
+	img.Refresh()
+}
+
 func iconImage(name string, clr color.Color, size float32) *canvas.Image {
 	img := canvas.NewImageFromResource(iconResource(name, clr))
 	img.FillMode = canvas.ImageFillContain

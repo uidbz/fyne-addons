@@ -403,8 +403,7 @@ func (r *placesRenderer) Layout(size fyne.Size) {
 				continue
 			}
 			row.show()
-			row.icon.Resource = iconResource(p.icon, placeColor(p.icon))
-			row.icon.Refresh()
+			setIconResource(row.icon, p.icon, placeColor(p.icon))
 			row.icon.Resize(fyne.NewSize(16, 16))
 			row.icon.Move(fyne.NewPos(4, pos+4))
 			row.text.Text = elide(p.name, 158, textSize)
