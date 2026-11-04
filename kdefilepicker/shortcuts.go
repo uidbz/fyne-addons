@@ -8,14 +8,19 @@ import (
 )
 
 // InstallShortcuts binds the standard KDE file-dialog keyboard shortcuts to
-// the canvas of w. ShowInWindow calls this automatically.
+// the canvas of w. ShowInWindow and ShowOverlay call this automatically.
+// Registrations are tracked so RemoveShortcuts can tear them down again;
+// calling InstallShortcuts twice does not stack duplicate handlers.
 func (d *Dialog) InstallShortcuts(w fyne.Window) {
 	c := w.Canvas()
 	if c == nil {
 		return
 	}
+	d.RemoveShortcuts()
 	add := func(key fyne.KeyName, mod fyne.KeyModifier, fn func()) {
-		c.AddShortcut(&desktop.CustomShortcut{KeyName: key, Modifier: mod}, func(fyne.Shortcut) { fn() })
+		sc := &desktop.CustomShortcut{KeyName: key, Modifier: mod}
+		c.AddShortcut(sc, func(fyne.Shortcut) { fn() })
+		d.installed = append(d.installed, installedShortcut{canvas: c, shortcut: sc})
 	}
 	add(fyne.KeyL, fyne.KeyModifierControl, d.beginPathEdit)
 	add(fyne.KeyI, fyne.KeyModifierControl, func() { d.setQuickFilter(!d.quickVisible) })
@@ -40,4 +45,20 @@ func (d *Dialog) InstallShortcuts(w fyne.Window) {
 	add(fyne.KeyLeft, fyne.KeyModifierAlt, d.back)
 	add(fyne.KeyRight, fyne.KeyModifierAlt, d.forward)
 	add(fyne.KeyUp, fyne.KeyModifierAlt, d.up)
+}
+
+// installedShortcut remembers one canvas shortcut registration for teardown.
+type installedShortcut struct {
+	canvas   fyne.Canvas
+	shortcut fyne.Shortcut
+}
+
+// RemoveShortcuts uninstalls the keyboard shortcuts registered by
+// InstallShortcuts so they do not leak into the host window after the
+// dialog is closed.
+func (d *Dialog) RemoveShortcuts() {
+	for _, in := range d.installed {
+		in.canvas.RemoveShortcut(in.shortcut)
+	}
+	d.installed = nil
 }

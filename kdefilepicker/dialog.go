@@ -35,6 +35,14 @@ type Filter struct {
 // AllFiles is the standard catch-all filter.
 var AllFiles = Filter{Name: "All Files", Patterns: []string{"*"}}
 
+// Geometry measured from the reference Plasma 6 file dialog.
+const (
+	refWidth        = float32(1400)
+	refHeight       = float32(869)
+	minDialogWidth  = float32(900)
+	minDialogHeight = float32(600)
+)
+
 // Dialog is the KDE 6 styled file dialog widget. It is a normal
 // fyne.CanvasObject and can therefore be embedded in custom window chrome.
 type Dialog struct {
@@ -72,6 +80,9 @@ type Dialog struct {
 	onCancel func()
 
 	window            fyne.Window
+	overlay           *dialogOverlay
+	overlayShown      bool
+	installed         []installedShortcut
 	pendingFocus      fyne.Focusable
 	pendingFocusTries int
 	noDelayedFocus    bool // set by tests to keep timers out of the test window
@@ -260,6 +271,24 @@ func (d *Dialog) SetOnAccept(fn func(string)) { d.onAccept = fn }
 // SetOnCancel registers the callback invoked when the dialog is cancelled.
 func (d *Dialog) SetOnCancel(fn func()) { d.onCancel = fn }
 
+// SetOpenLabel overrides the label of the accept button ("Open"/"Save").
+func (d *Dialog) SetOpenLabel(label string) {
+	if strings.TrimSpace(label) == "" {
+		return
+	}
+	d.bottom.open.setLabel(label)
+	d.bottom.Refresh()
+}
+
+// SetCancelLabel overrides the label of the cancel button ("Cancel").
+func (d *Dialog) SetCancelLabel(label string) {
+	if strings.TrimSpace(label) == "" {
+		return
+	}
+	d.bottom.cancel.setLabel(label)
+	d.bottom.Refresh()
+}
+
 // CurrentDir returns the directory currently shown.
 func (d *Dialog) CurrentDir() string { return d.currentDir }
 
@@ -270,11 +299,19 @@ func (d *Dialog) ShowInWindow(w fyne.Window) {
 	w.SetTitle(d.title)
 	w.SetContent(d)
 	d.InstallShortcuts(w)
-	w.Resize(fyne.NewSize(1400, 869))
+	w.Resize(fyne.NewSize(refWidth, refHeight))
 	w.CenterOnScreen()
 	d.FocusName()
-	// The first layout happens before the window's focus manager has
-	// traversed the new content tree; retry once the window is on screen.
+	d.focusNameAfterPaint()
+}
+
+// focusNameAfterPaint retries focusing the name entry after the first paint.
+// The first layout happens before the canvas' focus manager has traversed
+// the new content tree; retry once the content is on screen.
+func (d *Dialog) focusNameAfterPaint() {
+	if d.noDelayedFocus {
+		return
+	}
 	time.AfterFunc(250*time.Millisecond, func() {
 		fyne.Do(func() {
 			if d.window == nil {
@@ -313,8 +350,13 @@ func (d *Dialog) focusDelayed(obj fyne.Focusable) {
 	})
 }
 
-// Close closes the window hosting the dialog, if any.
+// Close dismisses an overlay presentation or closes the window hosting the
+// dialog, whichever is active.
 func (d *Dialog) Close() {
+	if d.overlayShown {
+		d.Dismiss()
+		return
+	}
 	if d.window != nil {
 		d.window.Close()
 	}
@@ -552,12 +594,18 @@ func (d *Dialog) accept() {
 }
 
 func (d *Dialog) deliver(path string) {
+	if d.overlayShown {
+		d.Dismiss()
+	}
 	if d.onAccept != nil {
 		d.onAccept(path)
 	}
 }
 
 func (d *Dialog) cancel() {
+	if d.overlayShown {
+		d.Dismiss()
+	}
 	if d.onCancel != nil {
 		d.onCancel()
 	}
@@ -694,7 +742,7 @@ func (r *dialogRenderer) Layout(size fyne.Size) {
 	}
 }
 
-func (r *dialogRenderer) MinSize() fyne.Size { return fyne.NewSize(900, 600) }
+func (r *dialogRenderer) MinSize() fyne.Size { return fyne.NewSize(minDialogWidth, minDialogHeight) }
 
 func (r *dialogRenderer) Refresh() {
 	r.Layout(r.d.Size())

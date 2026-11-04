@@ -83,8 +83,8 @@ func (r *bottomPanelRenderer) Layout(size fyne.Size) {
 	b.filter.Resize(fyne.NewSize(fieldW, formRowH))
 	b.filter.Move(fyne.NewPos(fieldX, 51))
 
-	cancelW := float32(100)
-	openW := float32(84)
+	cancelW := max(float32(100), b.cancel.MinSize().Width)
+	openW := max(float32(84), b.open.MinSize().Width)
 	cancelX := size.Width - 10 - cancelW
 	openX := cancelX - 10 - openW
 	b.cancel.Resize(fyne.NewSize(cancelW, 38))

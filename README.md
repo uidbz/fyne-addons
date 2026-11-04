@@ -147,6 +147,26 @@ The widget adapts to the size it is given. The reference screenshot is
 1400×869 at 100% scale. The window title bar/decoration is intentionally left
 to the operating system, just like a native KDE dialog.
 
+### Overlay presentation
+
+`ShowOverlay` presents the dialog the way Fyne's stock dialogs work: as an
+overlay on top of an existing window, dimming the parent content (in the
+spirit of KWin's modal dimming) and centering the dialog. Accepting or
+cancelling dismisses the overlay automatically, and the keyboard shortcuts
+are installed on show and removed on dismiss so they never leak into the
+host window:
+
+```go
+d := kdefilepicker.NewOpenDialog("")
+d.SetOnAccept(func(path string) { /* ... */ })
+d.ShowOverlay(mainWindow) // no extra window, no theme changes needed
+```
+
+The dialog scales with the host window up to the reference size and never
+shrinks below its minimum chrome size. `Dismiss()` closes it manually,
+`ShowingOverlay()` reports the state, and `Close()` dispatches to whichever
+presentation is active.
+
 ---
 
 ## API overview
@@ -160,12 +180,15 @@ to the operating system, just like a native KDE dialog.
 | `SetShowHidden(bool)` | Show or hide dot files. |
 | `SetSingleClickDirectories(bool)` / `SingleClickDirectories()` | Enter folders with a single click. |
 | `SetFileName(name)` | Pre-fill the name field. |
+| `SetOpenLabel(label)` / `SetCancelLabel(label)` | Override the accept/cancel button text. |
 | `SetOnAccept(func(path string))` | Called with the chosen path. |
 | `SetOnCancel(func())` | Called when the dialog is cancelled. |
 | `SetViewMode(ViewDetails/ViewCompact/ViewIcons)` | Switch file list presentation. |
 | `SelectFile(name)` | Programmatically select an entry. |
 | `ShowPreview(bool)` | Show or hide the preview dock. |
 | `ShowInWindow(w)` | Show as the content of a window at the reference size. |
+| `ShowOverlay(w)` | Show as an overlay on an existing window (dimmed, centered, auto-dismiss). |
+| `Dismiss()` / `ShowingOverlay()` | Close / query the overlay presentation. |
 | `Accept()`, `Cancel()`, `RefreshDir()`, `CurrentDir()` | Control the dialog. |
 | `NewTheme()` | Breeze Dark Fyne theme used by the chrome and popups. |
 

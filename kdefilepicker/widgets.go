@@ -170,6 +170,16 @@ func (b *pushButton) SetEnabled(enabled bool) {
 	b.Refresh()
 }
 
+// setLabel changes the button text and re-renders it.
+func (b *pushButton) setLabel(label string) {
+	b.label = label
+	if b.txt != nil {
+		b.txt.Text = label
+		b.txt.Refresh()
+	}
+	b.Refresh()
+}
+
 func (b *pushButton) Tapped(*fyne.PointEvent) {
 	if b.enabled && b.tap != nil {
 		b.tap()
