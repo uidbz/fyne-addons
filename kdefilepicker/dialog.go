@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -85,10 +87,18 @@ type Dialog struct {
 	pendingFocusTries int
 	noDelayedFocus    bool // set by tests to keep timers out of the test window
 
+	// focusMu serializes the deferred-focus timer path with the teardown
+	// paths (Dismiss/Close/Destroy). Both touch the canvas OverlayStack,
+	// which is not thread-safe, and a timer callback can fire exactly while
+	// a Cancel removes the overlay. Hold it only across small canvas
+	// operations; code under focusMu must not call back into Dismiss,
+	// Close or Destroy.
+	focusMu sync.Mutex
+
 	focusTimer *time.Timer
 	showTimer  *time.Timer
 	msgTimer   *time.Timer
-	destroyed  bool
+	destroyed  atomic.Bool
 
 	bg      *canvas.Rectangle
 	divider *canvas.Rectangle
@@ -316,13 +326,15 @@ func (d *Dialog) ShowInWindow(w fyne.Window) {
 // The first layout happens before the canvas' focus manager has traversed
 // the new content tree; retry once the content is on screen.
 func (d *Dialog) focusNameAfterPaint() {
-	if d.noDelayedFocus || d.destroyed {
+	if d.noDelayedFocus || d.destroyed.Load() {
 		return
 	}
 	d.stopTimer(&d.showTimer)
 	d.showTimer = time.AfterFunc(250*time.Millisecond, func() {
 		fyne.Do(func() {
-			if d.destroyed || d.window == nil || d.window.Canvas() == nil {
+			d.focusMu.Lock()
+			defer d.focusMu.Unlock()
+			if d.destroyed.Load() || d.window == nil || d.window.Canvas() == nil {
 				return
 			}
 			d.window.Canvas().Focus(d.bottom.name)
@@ -335,10 +347,13 @@ func (d *Dialog) focusNameAfterPaint() {
 func (d *Dialog) FocusName() { d.requestFocus(d.bottom.name) }
 
 func (d *Dialog) requestFocus(obj fyne.Focusable) {
-	if d.destroyed {
+	d.focusMu.Lock()
+	if d.destroyed.Load() {
+		d.focusMu.Unlock()
 		return
 	}
 	d.pendingFocus = obj
+	d.focusMu.Unlock()
 	d.Refresh()
 	d.focusDelayed(obj)
 }
@@ -347,18 +362,23 @@ func (d *Dialog) requestFocus(obj fyne.Focusable) {
 // widget. Fyne only caches renderers during a paint, and the focus manager
 // walks cached renderers.
 func (d *Dialog) focusDelayed(obj fyne.Focusable) {
-	if d.noDelayedFocus || d.destroyed {
+	d.focusMu.Lock()
+	if d.noDelayedFocus || d.destroyed.Load() {
+		d.focusMu.Unlock()
 		return
 	}
 	d.stopTimer(&d.focusTimer)
 	d.focusTimer = time.AfterFunc(40*time.Millisecond, func() {
 		fyne.Do(func() {
-			if d.destroyed || d.window == nil || d.window.Canvas() == nil || d.pendingFocus != obj {
+			d.focusMu.Lock()
+			defer d.focusMu.Unlock()
+			if d.destroyed.Load() || d.window == nil || d.window.Canvas() == nil || d.pendingFocus != obj {
 				return
 			}
 			d.window.Canvas().Focus(obj)
 		})
 	})
+	d.focusMu.Unlock()
 }
 
 func (d *Dialog) stopTimer(timer **time.Timer) {
@@ -386,8 +406,10 @@ func (d *Dialog) Close() {
 // Destroy stops pending timers owned by the dialog. The dialog must not be
 // reused after Destroy is called.
 func (d *Dialog) Destroy() {
-	d.destroyed = true
+	d.focusMu.Lock()
+	d.destroyed.Store(true)
 	d.pendingFocus = nil
+	d.focusMu.Unlock()
 	d.stopTimer(&d.focusTimer)
 	d.stopTimer(&d.showTimer)
 	d.stopTimer(&d.msgTimer)
@@ -695,7 +717,7 @@ func (d *Dialog) cancel() {
 }
 
 func (d *Dialog) showError(text string) {
-	if d.destroyed {
+	if d.destroyed.Load() {
 		return
 	}
 	d.ensureMessageObjects()
@@ -707,7 +729,7 @@ func (d *Dialog) showError(text string) {
 	d.stopTimer(&d.msgTimer)
 	d.msgTimer = time.AfterFunc(6*time.Second, func() {
 		fyne.Do(func() {
-			if d.destroyed {
+			if d.destroyed.Load() {
 				return
 			}
 			d.msgBg.Hide()

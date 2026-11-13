@@ -54,7 +54,13 @@ func (d *Dialog) Dismiss() {
 	if !d.overlayShown || d.overlay == nil {
 		return
 	}
+	// Same mutex as the deferred-focus timers: overlay removal and a
+	// pending Canvas().Focus must not run concurrently, and clearing
+	// pendingFocus here makes any in-flight focus callback a no-op.
+	d.focusMu.Lock()
+	defer d.focusMu.Unlock()
 	d.overlayShown = false
+	d.pendingFocus = nil
 	if d.window != nil {
 		if c := d.window.Canvas(); c != nil {
 			c.Overlays().Remove(d.overlay)
