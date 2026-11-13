@@ -17,12 +17,13 @@ import (
 )
 
 type place struct {
-	name   string
-	path   string
-	icon   string
-	device bool
-	used   uint64
-	size   uint64
+	name    string
+	path    string
+	icon    string
+	device  bool
+	mounted bool
+	used    uint64
+	size    uint64
 }
 
 type placeGroup struct {
